@@ -170,16 +170,19 @@ func (s *Service) InitProtocol(identity *ecdsa.PrivateKey, db *sql.DB, multiAcco
 	return messenger.Init()
 }
 
-func (s *Service) StartMessenger() error {
+func (s *Service) StartMessenger(dontRunLoop bool) error {
 	// Start a loop that retrieves all messages and propagates them to status-react.
 	s.cancelMessenger = make(chan struct{})
 	err := s.messenger.Start()
 	if err != nil {
 		return err
 	}
-	go s.retrieveMessagesLoop(time.Second, s.cancelMessenger)
-	go s.verifyTransactionLoop(30*time.Second, s.cancelMessenger)
-	go s.verifyENSLoop(30*time.Second, s.cancelMessenger)
+
+	if !dontRunLoop {
+		go s.retrieveMessagesLoop(time.Second, s.cancelMessenger)
+		go s.verifyTransactionLoop(30*time.Second, s.cancelMessenger)
+		go s.verifyENSLoop(30*time.Second, s.cancelMessenger)
+	}
 	return nil
 }
 

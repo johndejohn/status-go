@@ -204,6 +204,10 @@ func (api *PublicAPI) Join(chat protocol.Chat) error {
 	return api.service.messenger.Join(chat)
 }
 
+func (api *PublicAPI) RetrieveAll() (*protocol.MessengerResponse, error) {
+	return api.service.messenger.RetrieveAll()
+}
+
 func (api *PublicAPI) Leave(chat protocol.Chat) error {
 	return api.service.messenger.Leave(chat)
 }
@@ -395,8 +399,8 @@ func (api *PublicAPI) ChatMessages(chatID, cursor string, limit int) (*Applicati
 	}, nil
 }
 
-func (api *PublicAPI) StartMessenger() error {
-	return api.service.StartMessenger()
+func (api *PublicAPI) StartMessenger(dontRunLoop bool) error {
+	return api.service.StartMessenger(dontRunLoop)
 }
 
 func (api *PublicAPI) DeleteMessage(id string) error {
