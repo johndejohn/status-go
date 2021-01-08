@@ -1425,6 +1425,8 @@ func (c *Client) resendingLoop() error {
 			return nil
 		}
 
+		c.config.Logger.Debug("have some retriable notifications", zap.Int("retryable-notifications", len(retriableNotifications)))
+
 		for _, pn := range retriableNotifications {
 
 			// check if we should retry the notification

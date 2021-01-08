@@ -592,18 +592,7 @@ func (p *MessageProcessor) sendMessageSpec(ctx context.Context, publicKey *ecdsa
 		return nil, nil, err
 	}
 
-	logger := p.logger.With(zap.String("site", "sendMessageSpec"))
-
-	var hash []byte
-
-	// process shared secret
-	if messageSpec.AgreedSecret {
-		logger.Debug("sending using shared secret")
-		hash, err = p.transport.SendPrivateWithSharedSecret(ctx, newMessage, publicKey, messageSpec.SharedSecret.Key)
-	} else {
-		logger.Debug("sending partitioned topic")
-		hash, err = p.transport.SendPrivateWithPartitioned(ctx, newMessage, publicKey)
-	}
+	hash, err := p.transport.SendPrivateWithPartitioned(ctx, newMessage, publicKey)
 	if err != nil {
 		return nil, nil, err
 	}

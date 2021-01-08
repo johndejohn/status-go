@@ -21,7 +21,7 @@ import (
 //go:generate protoc --go_out=. ./protocol_message.proto
 
 const (
-	protocolVersion                = 1
+	protocolVersion                = 0
 	sharedSecretNegotiationVersion = 1
 	partitionedTopicMinVersion     = 1
 	defaultMinVersion              = 0
@@ -417,16 +417,6 @@ func (p *Protocol) HandleMessage(
 			return nil, err
 		}
 
-		bundles := protocolMessage.GetBundles()
-		version := getProtocolVersion(bundles, protocolMessage.GetInstallationId())
-		if version >= sharedSecretNegotiationVersion {
-			sharedSecret, err := p.secret.Generate(myIdentityKey, theirPublicKey, protocolMessage.GetInstallationId())
-			if err != nil {
-				return nil, err
-			}
-
-			response.SharedSecrets = []*sharedsecret.Secret{sharedSecret}
-		}
 		response.DecryptedMessage = message
 		return response, nil
 	}
