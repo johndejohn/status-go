@@ -61,6 +61,9 @@ const emojiResendMaxCount = 3
 
 var communityAdvertiseIntervalSecond int64 = 60 * 60
 
+// messageCacheIntervalMs is how long we should keep processed messages in the cache, in ms
+var messageCacheIntervalMs uint64 = 1000 * 60 * 60 * 48
+
 // Messenger is a entity managing chats and messages.
 // It acts as a bridge between the application and encryption
 // layers.
@@ -721,6 +724,10 @@ func (m *Messenger) handleEncryptionLayerSubscriptions(subscriptions *encryption
 			case <-subscriptions.SendContactCode:
 				if err := m.handleSendContactCode(); err != nil {
 					m.logger.Error("failed to publish contact code", zap.Error(err))
+				}
+				// we also piggy-back to clean up cached messages
+				if err := m.transport.CleanMessagesProcessed(m.getTimesource().GetCurrentTime() - messageCacheIntervalMs); err != nil {
+					m.logger.Error("failed to clean processed messages", zap.Error(err))
 				}
 
 			case <-subscriptions.Quit:
@@ -2875,7 +2882,10 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 
 	logger := m.logger.With(zap.String("site", "RetrieveAll"))
 	for _, messages := range chatWithMessages {
+		var processedMessages []string
 		for _, shhMessage := range messages {
+			// Indicates tha all messages in the batch have been processed correctly
+			messageProcessed := true
 			statusMessages, err := m.processor.HandleMessages(shhMessage, true)
 			if err != nil {
 				logger.Info("failed to decode messages", zap.Error(err))
@@ -2917,6 +2927,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 					c, err := buildContact(publicKey)
 					if err != nil {
 						logger.Info("failed to build contact", zap.Error(err))
+						messageProcessed = false
 						continue
 					}
 					contact = c
@@ -2941,6 +2952,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleMembershipUpdate(messageState, messageState.AllChats[rawMembershipUpdate.ChatId], rawMembershipUpdate, m.systemMessagesTranslations)
 						if err != nil {
 							logger.Warn("failed to handle MembershipUpdate", zap.Error(err))
+							messageProcessed = false
 							continue
 						}
 
@@ -2950,6 +2962,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleChatMessage(messageState)
 						if err != nil {
 							logger.Warn("failed to handle ChatMessage", zap.Error(err))
+							messageProcessed = false
 							continue
 						}
 
@@ -2963,6 +2976,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandlePairInstallation(messageState, p)
 						if err != nil {
 							logger.Warn("failed to handle PairInstallation", zap.Error(err))
+							messageProcessed = false
 							continue
 						}
 
@@ -2977,6 +2991,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleSyncInstallationContact(messageState, p)
 						if err != nil {
 							logger.Warn("failed to handle SyncInstallationContact", zap.Error(err))
+							messageProcessed = false
 							continue
 						}
 
@@ -2996,6 +3011,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 							err := m.reregisterForPushNotifications()
 							if err != nil {
 
+								messageProcessed = false
 								logger.Warn("could not re-register for push notifications", zap.Error(err))
 								continue
 							}
@@ -3007,6 +3023,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleRequestAddressForTransaction(messageState, command)
 						if err != nil {
 							logger.Warn("failed to handle RequestAddressForTransaction", zap.Error(err))
+							messageProcessed = false
 							continue
 						}
 
@@ -3016,6 +3033,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleSendTransaction(messageState, command)
 						if err != nil {
 							logger.Warn("failed to handle SendTransaction", zap.Error(err))
+							messageProcessed = false
 							continue
 						}
 
@@ -3025,6 +3043,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleAcceptRequestAddressForTransaction(messageState, command)
 						if err != nil {
 							logger.Warn("failed to handle AcceptRequestAddressForTransaction", zap.Error(err))
+							messageProcessed = false
 							continue
 						}
 
@@ -3034,6 +3053,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleDeclineRequestAddressForTransaction(messageState, command)
 						if err != nil {
 							logger.Warn("failed to handle DeclineRequestAddressForTransaction", zap.Error(err))
+							messageProcessed = false
 							continue
 						}
 
@@ -3043,6 +3063,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleDeclineRequestTransaction(messageState, command)
 						if err != nil {
 							logger.Warn("failed to handle DeclineRequestTransaction", zap.Error(err))
+							messageProcessed = false
 							continue
 						}
 
@@ -3052,6 +3073,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleRequestTransaction(messageState, command)
 						if err != nil {
 							logger.Warn("failed to handle RequestTransaction", zap.Error(err))
+							messageProcessed = false
 							continue
 						}
 
@@ -3061,6 +3083,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleContactUpdate(messageState, contactUpdate)
 						if err != nil {
 							logger.Warn("failed to handle ContactUpdate", zap.Error(err))
+							messageProcessed = false
 							continue
 						}
 					case protobuf.PushNotificationQuery:
@@ -3070,6 +3093,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						}
 						logger.Debug("Handling PushNotificationQuery")
 						if err := m.pushNotificationServer.HandlePushNotificationQuery(publicKey, msg.ID, msg.ParsedMessage.Interface().(protobuf.PushNotificationQuery)); err != nil {
+							messageProcessed = false
 							logger.Warn("failed to handle PushNotificationQuery", zap.Error(err))
 						}
 						// We continue in any case, no changes to messenger
@@ -3081,6 +3105,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						}
 						logger.Debug("Handling PushNotificationRegistrationResponse")
 						if err := m.pushNotificationClient.HandlePushNotificationRegistrationResponse(publicKey, msg.ParsedMessage.Interface().(protobuf.PushNotificationRegistrationResponse)); err != nil {
+							messageProcessed = false
 							logger.Warn("failed to handle PushNotificationRegistrationResponse", zap.Error(err))
 						}
 						// We continue in any case, no changes to messenger
@@ -3094,6 +3119,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 							logger.Debug("Received ContactCodeAdvertisement ChatIdentity")
 							err = m.handler.HandleChatIdentity(messageState, *cca.ChatIdentity)
 							if err != nil {
+								messageProcessed = false
 								logger.Warn("failed to handle ContactCodeAdvertisement ChatIdentity", zap.Error(err))
 								// No continue as Chat Identity may fail but the rest of the cca may process fine.
 							}
@@ -3104,6 +3130,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						}
 						logger.Debug("Handling ContactCodeAdvertisement")
 						if err := m.pushNotificationClient.HandleContactCodeAdvertisement(publicKey, cca); err != nil {
+							messageProcessed = false
 							logger.Warn("failed to handle ContactCodeAdvertisement", zap.Error(err))
 						}
 
@@ -3117,6 +3144,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						}
 						logger.Debug("Handling PushNotificationResponse")
 						if err := m.pushNotificationClient.HandlePushNotificationResponse(publicKey, msg.ParsedMessage.Interface().(protobuf.PushNotificationResponse)); err != nil {
+							messageProcessed = false
 							logger.Warn("failed to handle PushNotificationResponse", zap.Error(err))
 						}
 						// We continue in any case, no changes to messenger
@@ -3129,6 +3157,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						}
 						logger.Debug("Handling PushNotificationQueryResponse")
 						if err := m.pushNotificationClient.HandlePushNotificationQueryResponse(publicKey, msg.ParsedMessage.Interface().(protobuf.PushNotificationQueryResponse)); err != nil {
+							messageProcessed = false
 							logger.Warn("failed to handle PushNotificationQueryResponse", zap.Error(err))
 						}
 						// We continue in any case, no changes to messenger
@@ -3141,6 +3170,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						}
 						logger.Debug("Handling PushNotificationRequest")
 						if err := m.pushNotificationServer.HandlePushNotificationRequest(publicKey, msg.ID, msg.ParsedMessage.Interface().(protobuf.PushNotificationRequest)); err != nil {
+							messageProcessed = false
 							logger.Warn("failed to handle PushNotificationRequest", zap.Error(err))
 						}
 						// We continue in any case, no changes to messenger
@@ -3150,6 +3180,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleEmojiReaction(messageState, msg.ParsedMessage.Interface().(protobuf.EmojiReaction))
 						if err != nil {
 							logger.Warn("failed to handle EmojiReaction", zap.Error(err))
+							messageProcessed = false
 							continue
 						}
 					case protobuf.GroupChatInvitation:
@@ -3157,6 +3188,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleGroupChatInvitation(messageState, msg.ParsedMessage.Interface().(protobuf.GroupChatInvitation))
 						if err != nil {
 							logger.Warn("failed to handle GroupChatInvitation", zap.Error(err))
+							messageProcessed = false
 							continue
 						}
 					case protobuf.ChatIdentity:
@@ -3164,6 +3196,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleChatIdentity(messageState, msg.ParsedMessage.Interface().(protobuf.ChatIdentity))
 						if err != nil {
 							logger.Warn("failed to handle ChatIdentity", zap.Error(err))
+							messageProcessed = false
 							continue
 						}
 
@@ -3172,6 +3205,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleCommunityDescription(messageState, publicKey, msg.ParsedMessage.Interface().(protobuf.CommunityDescription), msg.DecryptedPayload)
 						if err != nil {
 							logger.Warn("failed to handle CommunityDescription", zap.Error(err))
+							messageProcessed = false
 							continue
 						}
 					case protobuf.CommunityInvitation:
@@ -3180,6 +3214,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleCommunityInvitation(messageState, publicKey, invitation, invitation.CommunityDescription)
 						if err != nil {
 							logger.Warn("failed to handle CommunityDescription", zap.Error(err))
+							messageProcessed = false
 							continue
 						}
 					default:
@@ -3191,6 +3226,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 							}
 							logger.Debug("Handling PushNotificationRegistration")
 							if err := m.pushNotificationServer.HandlePushNotificationRegistration(publicKey, msg.ParsedMessage.Interface().([]byte)); err != nil {
+								messageProcessed = false
 								logger.Warn("failed to handle PushNotificationRegistration", zap.Error(err))
 							}
 							// We continue in any case, no changes to messenger
@@ -3203,6 +3239,16 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 				} else {
 					logger.Debug("parsed message is nil")
 				}
+			}
+
+			if messageProcessed {
+				processedMessages = append(processedMessages, types.EncodeHex(shhMessage.Hash))
+			}
+		}
+
+		if len(processedMessages) != 0 {
+			if err := m.transport.ConfirmMessagesProcessed(processedMessages, m.getTimesource().GetCurrentTime()); err != nil {
+				logger.Warn("failed to confirm processed messages", zap.Error(err))
 			}
 		}
 	}
