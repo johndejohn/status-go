@@ -67,7 +67,7 @@ type Transport struct {
 	keysManager *wakuServiceKeysManager
 	filters     *transport.FiltersManager
 	logger      *zap.Logger
-	cache       *transport.MessageCache
+	cache       *transport.ProcessedMessageIDsCache
 
 	mailservers      []string
 	envelopesMonitor *EnvelopesMonitor
@@ -104,7 +104,7 @@ func NewTransport(
 	t := &Transport{
 		waku:             waku,
 		api:              api,
-		cache:            transport.NewMessageCache(db),
+		cache:            transport.NewProcessedMessageIDsCache(db),
 		envelopesMonitor: envelopesMonitor,
 		keysManager: &wakuServiceKeysManager{
 			waku:              waku,
