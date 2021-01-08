@@ -1223,11 +1223,10 @@ func (m *Messenger) CreateGroupChatWithMembers(ctx context.Context, name string,
 	m.allChats[chat.ID] = &chat
 
 	_, err = m.dispatchMessage(ctx, common.RawMessage{
-		LocalChatID:         chat.ID,
-		Payload:             encodedMessage,
-		MessageType:         protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
-		Recipients:          recipients,
-		ResendAutomatically: true,
+		LocalChatID: chat.ID,
+		Payload:     encodedMessage,
+		MessageType: protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
+		Recipients:  recipients,
 	})
 
 	if err != nil {
@@ -1306,11 +1305,10 @@ func (m *Messenger) RemoveMemberFromGroupChat(ctx context.Context, chatID string
 		return nil, err
 	}
 	_, err = m.dispatchMessage(ctx, common.RawMessage{
-		LocalChatID:         chat.ID,
-		Payload:             encodedMessage,
-		MessageType:         protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
-		Recipients:          oldRecipients,
-		ResendAutomatically: true,
+		LocalChatID: chat.ID,
+		Payload:     encodedMessage,
+		MessageType: protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
+		Recipients:  oldRecipients,
 	})
 	if err != nil {
 		return nil, err
@@ -1395,11 +1393,10 @@ func (m *Messenger) AddMembersToGroupChat(ctx context.Context, chatID string, me
 		return nil, err
 	}
 	_, err = m.dispatchMessage(ctx, common.RawMessage{
-		LocalChatID:         chat.ID,
-		Payload:             encodedMessage,
-		MessageType:         protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
-		Recipients:          recipients,
-		ResendAutomatically: true,
+		LocalChatID: chat.ID,
+		Payload:     encodedMessage,
+		MessageType: protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
+		Recipients:  recipients,
 	})
 
 	if err != nil {
@@ -1460,11 +1457,10 @@ func (m *Messenger) ChangeGroupChatName(ctx context.Context, chatID string, name
 		return nil, err
 	}
 	_, err = m.dispatchMessage(ctx, common.RawMessage{
-		LocalChatID:         chat.ID,
-		Payload:             encodedMessage,
-		MessageType:         protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
-		Recipients:          recipients,
-		ResendAutomatically: true,
+		LocalChatID: chat.ID,
+		Payload:     encodedMessage,
+		MessageType: protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
+		Recipients:  recipients,
 	})
 
 	if err != nil {
@@ -1671,11 +1667,10 @@ func (m *Messenger) AddAdminsToGroupChat(ctx context.Context, chatID string, mem
 		return nil, err
 	}
 	_, err = m.dispatchMessage(ctx, common.RawMessage{
-		LocalChatID:         chat.ID,
-		Payload:             encodedMessage,
-		MessageType:         protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
-		Recipients:          recipients,
-		ResendAutomatically: true,
+		LocalChatID: chat.ID,
+		Payload:     encodedMessage,
+		MessageType: protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
+		Recipients:  recipients,
 	})
 
 	if err != nil {
@@ -1739,11 +1734,10 @@ func (m *Messenger) ConfirmJoiningGroup(ctx context.Context, chatID string) (*Me
 		return nil, err
 	}
 	_, err = m.dispatchMessage(ctx, common.RawMessage{
-		LocalChatID:         chat.ID,
-		Payload:             encodedMessage,
-		MessageType:         protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
-		Recipients:          recipients,
-		ResendAutomatically: true,
+		LocalChatID: chat.ID,
+		Payload:     encodedMessage,
+		MessageType: protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
+		Recipients:  recipients,
 	})
 	if err != nil {
 		return nil, err
@@ -1807,11 +1801,10 @@ func (m *Messenger) LeaveGroupChat(ctx context.Context, chatID string, remove bo
 		return nil, err
 	}
 	_, err = m.dispatchMessage(ctx, common.RawMessage{
-		LocalChatID:         chat.ID,
-		Payload:             encodedMessage,
-		MessageType:         protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
-		Recipients:          recipients,
-		ResendAutomatically: true,
+		LocalChatID: chat.ID,
+		Payload:     encodedMessage,
+		MessageType: protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
+		Recipients:  recipients,
 	})
 	if err != nil {
 		return nil, err
