@@ -415,9 +415,6 @@ func (db sqlitePersistence) Contacts() ([]*Contact, error) {
 			c.last_updated,
 			c.system_tags,
 			c.device_info,
-			c.ens_verified,
-			c.ens_verified_at,
-			c.tribute_to_talk,
 			c.local_nickname,
 			i.image_type,
 			i.payload
@@ -450,9 +447,6 @@ func (db sqlitePersistence) Contacts() ([]*Contact, error) {
 			&contact.LastUpdated,
 			&encodedSystemTags,
 			&encodedDeviceInfo,
-			&contact.ENSVerified,
-			&contact.ENSVerifiedAt,
-			&contact.TributeToTalk,
 			&nickname,
 			&imageType,
 			&imagePayload,
@@ -772,6 +766,9 @@ func (db sqlitePersistence) SaveContact(contact *Contact, tx *sql.Tx) (err error
 	}
 
 	// Insert record
+	// NOTE: tribute_to_talk is not used anymore, but it's not nullable
+	// Removing it requires copying over the table which might be expensive
+	// when there are many contacts, so best avoiding it
 	stmt, err := tx.Prepare(`
 		INSERT INTO contacts(
 			id,
@@ -782,12 +779,10 @@ func (db sqlitePersistence) SaveContact(contact *Contact, tx *sql.Tx) (err error
 			last_updated,
 			system_tags,
 			device_info,
-			ens_verified,
-			ens_verified_at,
-			tribute_to_talk,
 			local_nickname,
-			photo
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?, ?)
+			photo,
+			tribute_to_talk
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?,?, ?, "")
 	`)
 	if err != nil {
 		return
@@ -803,9 +798,6 @@ func (db sqlitePersistence) SaveContact(contact *Contact, tx *sql.Tx) (err error
 		contact.LastUpdated,
 		encodedSystemTags.Bytes(),
 		encodedDeviceInfo.Bytes(),
-		contact.ENSVerified,
-		contact.ENSVerifiedAt,
-		contact.TributeToTalk,
 		contact.LocalNickname,
 		// Photo is not used anymore but constrained to be NOT NULL
 		// we set it to blank for now to avoid a migration of the table

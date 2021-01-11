@@ -31,6 +31,7 @@ import (
 	"github.com/status-im/status-go/protocol/encryption"
 	"github.com/status-im/status-go/protocol/encryption/multidevice"
 	"github.com/status-im/status-go/protocol/encryption/sharedsecret"
+	"github.com/status-im/status-go/protocol/ens"
 	"github.com/status-im/status-go/protocol/identity/alias"
 	"github.com/status-im/status-go/protocol/identity/identicon"
 	"github.com/status-im/status-go/protocol/images"
@@ -81,6 +82,7 @@ type Messenger struct {
 	encryptor                  *encryption.Protocol
 	processor                  *common.MessageProcessor
 	handler                    *MessageHandler
+	ensVerifier                *ens.Verifier
 	pushNotificationClient     *pushnotificationclient.Client
 	pushNotificationServer     *pushnotificationserver.Server
 	communitiesManager         *communities.Manager
@@ -275,8 +277,9 @@ func NewMessenger(
 	if err != nil {
 		return nil, err
 	}
+	ensVerifier := ens.New(node, logger, transp, database, c.verifyENSURL, c.verifyENSContractAddress)
 
-	handler := newMessageHandler(identity, logger, &sqlitePersistence{db: database}, communitiesManager, transp)
+	handler := newMessageHandler(identity, logger, &sqlitePersistence{db: database}, communitiesManager, transp, ensVerifier)
 
 	messenger = &Messenger{
 		config:                     &c,
@@ -290,6 +293,7 @@ func NewMessenger(
 		pushNotificationClient:     pushNotificationClient,
 		pushNotificationServer:     pushNotificationServer,
 		communitiesManager:         communitiesManager,
+		ensVerifier:                ensVerifier,
 		featureFlags:               c.featureFlags,
 		systemMessagesTranslations: c.systemMessagesTranslations,
 		allChats:                   make(map[string]*Chat),
@@ -304,6 +308,7 @@ func NewMessenger(
 		account:                    c.account,
 		quit:                       make(chan struct{}),
 		shutdownTasks: []func() error{
+			ensVerifier.Stop,
 			pushNotificationClient.Stop,
 			communitiesManager.Stop,
 			encryptionProtocol.Stop,
@@ -413,6 +418,13 @@ func (m *Messenger) Start() (*MessengerResponse, error) {
 		}
 	}
 
+	ensSubscription := m.ensVerifier.Subscribe()
+
+	// Subscrbe
+	if err := m.ensVerifier.Start(); err != nil {
+		return err
+	}
+
 	// set shared secret handles
 	m.processor.SetHandleSharedSecrets(m.handleSharedSecrets)
 
@@ -430,6 +442,7 @@ func (m *Messenger) Start() (*MessengerResponse, error) {
 	m.handleEncryptionLayerSubscriptions(subscriptions)
 	m.handleCommunitiesSubscription(m.communitiesManager.Subscribe())
 	m.handleConnectionChange(m.online())
+	m.handleENSVerificationSubscription(ensSubscription)
 	m.watchConnectionChange()
 	m.watchExpiredEmojis()
 	m.watchIdentityImageChanges()
@@ -498,6 +511,7 @@ func (m *Messenger) handleConnectionChange(online bool) {
 			m.pushNotificationClient.Offline()
 		}
 	}
+	m.ensVerifier.SetOnline(online)
 }
 
 func (m *Messenger) online() bool {
@@ -827,6 +841,61 @@ func (m *Messenger) publishOrgInvitation(org *communities.Community, invitation 
 	}
 	_, err = m.processor.SendPrivate(context.Background(), pk, rawMessage)
 	return err
+}
+
+func (m *Messenger) handleENSVerified(records []*ens.ENSVerificationRecord) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	var contacts []*Contact
+	for _, record := range records {
+		m.logger.Info("handling record", zap.Any("record", record))
+		contact, ok := m.allContacts[record.PublicKey]
+		if !ok {
+			m.logger.Info("contact not found")
+			continue
+		}
+
+		contact.ENSVerified = record.Verified
+		contact.Name = record.Name
+		contacts = append(contacts, contact)
+	}
+
+	m.logger.Info("handled records", zap.Any("contacts", contacts))
+	if len(contacts) != 0 {
+		if err := m.persistence.SaveContacts(contacts); err != nil {
+			m.logger.Error("failed to save contacts", zap.Error(err))
+			return
+		}
+	}
+
+	m.logger.Info("calling on contacts")
+	if m.config.onContactENSVerified != nil {
+		m.logger.Info("called on contacts")
+		response := &MessengerResponse{Contacts: contacts}
+		m.config.onContactENSVerified(response)
+	}
+
+}
+
+func (m *Messenger) handleENSVerificationSubscription(c chan []*ens.ENSVerificationRecord) {
+	go func() {
+		for {
+			select {
+			case records, more := <-c:
+				if !more {
+					m.logger.Info("No more records, quitting")
+					return
+				}
+				if len(records) != 0 {
+					m.logger.Info("handling records", zap.Any("records", records))
+					m.handleENSVerified(records)
+				}
+			case <-m.quit:
+				return
+			}
+		}
+	}()
 }
 
 // handleCommunitiesSubscription handles events from communities

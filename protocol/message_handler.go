@@ -13,6 +13,7 @@ import (
 	"github.com/status-im/status-go/protocol/common"
 	"github.com/status-im/status-go/protocol/communities"
 	"github.com/status-im/status-go/protocol/encryption/multidevice"
+	"github.com/status-im/status-go/protocol/ens"
 	"github.com/status-im/status-go/protocol/protobuf"
 	"github.com/status-im/status-go/protocol/transport"
 	v1protocol "github.com/status-im/status-go/protocol/v1"
@@ -30,15 +31,17 @@ type MessageHandler struct {
 	identity           *ecdsa.PrivateKey
 	persistence        *sqlitePersistence
 	transport          transport.Transport
+	ensVerifier        *ens.Verifier
 	communitiesManager *communities.Manager
 	logger             *zap.Logger
 }
 
-func newMessageHandler(identity *ecdsa.PrivateKey, logger *zap.Logger, persistence *sqlitePersistence, communitiesManager *communities.Manager, transport transport.Transport) *MessageHandler {
+func newMessageHandler(identity *ecdsa.PrivateKey, logger *zap.Logger, persistence *sqlitePersistence, communitiesManager *communities.Manager, transport transport.Transport, ensVerifier *ens.Verifier) *MessageHandler {
 	return &MessageHandler{
 		identity:           identity,
 		persistence:        persistence,
 		communitiesManager: communitiesManager,
+		ensVerifier:        ensVerifier,
 		transport:          transport,
 		logger:             logger}
 }
@@ -463,10 +466,17 @@ func (m *MessageHandler) HandleChatMessage(state *ReceivedMessageState) error {
 	state.AllChats[chat.ID] = chat
 
 	contact := state.CurrentMessageState.Contact
-	if hasENSNameChanged(contact, receivedMessage.EnsName, receivedMessage.Clock) {
-		contact.ResetENSVerification(receivedMessage.Clock, receivedMessage.EnsName)
-		state.ModifiedContacts[contact.ID] = true
-		state.AllContacts[contact.ID] = contact
+	if receivedMessage.EnsName != "" {
+		oldRecord, err := m.ensVerifier.Add(contact.ID, receivedMessage.EnsName, receivedMessage.Clock)
+		if err != nil {
+			m.logger.Warn("failed to verify ENS name", zap.Error(err))
+		} else if oldRecord == nil {
+			// If oldRecord is nil, a new verification process will take place
+			// so we reset the record
+			contact.ENSVerified = false
+			state.ModifiedContacts[contact.ID] = true
+			state.AllContacts[contact.ID] = contact
+		}
 	}
 
 	if receivedMessage.ContentType == protobuf.ChatMessage_COMMUNITY {

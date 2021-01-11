@@ -7,3 +7,15 @@ CREATE TABLE communities_requests_to_join  (
   state INT NOT NULL DEFAULT 0,
   PRIMARY KEY (request, clock)
 );
+
+
+CREATE TABLE ens_verification_records (
+  public_key VARCHAR NOT NULL,
+  name VARCHAR NOT NULL,
+  verified BOOLEAN NOT NULL DEFAULT FALSE,
+  verified_at INT NOT NULL DEFAULT 0,
+  clock INT NOT NULL DEFAULT 0,
+  verification_retries INT NOT NULL DEFAULT 0,
+  next_retry INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (public_key) ON CONFLICT REPLACE
+);

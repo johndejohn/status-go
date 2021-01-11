@@ -13,6 +13,7 @@ import (
 
 type Verifier struct {
 	node            types.Node
+	online          bool
 	persistence     *Persistence
 	logger          *zap.Logger
 	timesource      common.TimeSource
@@ -46,6 +47,15 @@ func (v *Verifier) Stop() error {
 	return nil
 }
 
+func (v *Verifier) Add(pk, ensName string, clock uint64) (*ENSVerificationRecord, error) {
+	record := ENSVerificationRecord{PublicKey: pk, Name: ensName, Clock: clock}
+	return v.persistence.AddRecord(record)
+}
+
+func (v *Verifier) SetOnline(online bool) {
+	v.online = online
+}
+
 func (v *Verifier) verifyLoop() {
 
 	ticker := time.NewTicker(30 * time.Second)
@@ -55,6 +65,9 @@ func (v *Verifier) verifyLoop() {
 		case <-v.quit:
 			break
 		case <-ticker.C:
+			if !v.online || v.rpcEndpoint == "" || v.contractAddress == "" {
+				continue
+			}
 			err := v.verify(v.rpcEndpoint, v.contractAddress)
 			if err != nil {
 				v.logger.Error("verify loop failed", zap.Error(err))
@@ -64,7 +77,6 @@ func (v *Verifier) verifyLoop() {
 	}
 
 	ticker.Stop()
-
 }
 
 func (v *Verifier) Subscribe() chan []*ENSVerificationRecord {
@@ -74,6 +86,7 @@ func (v *Verifier) Subscribe() chan []*ENSVerificationRecord {
 }
 
 func (v *Verifier) publish(records []*ENSVerificationRecord) {
+	v.logger.Info("publishing records", zap.Any("records", records))
 	// Publish on channels, drop if buffer is full
 	for _, s := range v.subscriptions {
 		select {
@@ -107,10 +120,12 @@ func (v *Verifier) verify(rpcEndpoint, contractAddress string) error {
 			PublicKeyString: r.PublicKey[2:],
 			Name:            r.Name,
 		})
+		v.logger.Debug("verifying ens name", zap.Any("record", r))
 	}
 
 	ensResponse, err := verifier.CheckBatch(ensDetails, rpcEndpoint, contractAddress)
 	if err != nil {
+		v.logger.Error("failed to check batch", zap.Error(err))
 		return err
 	}
 
@@ -133,10 +148,18 @@ func (v *Verifier) verify(rpcEndpoint, contractAddress string) error {
 			)
 			record.VerificationRetries++
 		}
+		record.VerifiedAt = now
+		record.CalculateNextRetry()
+
 		records = append(records, record)
 	}
 
 	err = v.persistence.UpdateRecords(records)
+	if err != nil {
+
+		v.logger.Error("failed to update records", zap.Error(err))
+		return err
+	}
 
 	v.publish(records)
 
