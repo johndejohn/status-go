@@ -38,6 +38,7 @@ import (
 	"github.com/status-im/status-go/protocol/protobuf"
 	"github.com/status-im/status-go/protocol/pushnotificationclient"
 	"github.com/status-im/status-go/protocol/pushnotificationserver"
+	"github.com/status-im/status-go/protocol/requests"
 	"github.com/status-im/status-go/protocol/sqlite"
 	"github.com/status-im/status-go/protocol/transport"
 	wakutransp "github.com/status-im/status-go/protocol/transport/waku"
@@ -2060,7 +2061,19 @@ func (m *Messenger) CreateCommunityChat(orgID string, c *protobuf.CommunityChat)
 	}, m.saveChats(chats)
 }
 
-func (m *Messenger) CreateCommunity(description *protobuf.CommunityDescription) (*MessengerResponse, error) {
+func (m *Messenger) CreateCommunity(request *requests.CreateCommunity) (*MessengerResponse, error) {
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+
+	description, err := request.ToCommunityDescription()
+	if err != nil {
+		return nil, err
+	}
+
+	description.Members = make(map[string]*protobuf.CommunityMember)
+	description.Members[common.PubkeyToHex(&m.identity.PublicKey)] = &protobuf.CommunityMember{}
+
 	org, err := m.communitiesManager.CreateCommunity(description)
 	if err != nil {
 		return nil, err

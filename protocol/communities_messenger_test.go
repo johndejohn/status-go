@@ -17,6 +17,7 @@ import (
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/protocol/common"
 	"github.com/status-im/status-go/protocol/protobuf"
+	"github.com/status-im/status-go/protocol/requests"
 	"github.com/status-im/status-go/protocol/tt"
 	"github.com/status-im/status-go/waku"
 )
@@ -95,14 +96,10 @@ func (s *MessengerCommunitiesSuite) newMessenger() *Messenger {
 func (s *MessengerCommunitiesSuite) TestRetrieveCommunity() {
 	alice := s.newMessenger()
 
-	description := &protobuf.CommunityDescription{
-		Permissions: &protobuf.CommunityPermissions{
-			Access: protobuf.CommunityPermissions_NO_MEMBERSHIP,
-		},
-		Identity: &protobuf.ChatIdentity{
-			DisplayName: "status",
-			Description: "status community description",
-		},
+	description := &requests.CreateCommunity{
+		Membership:  protobuf.CommunityPermissions_NO_MEMBERSHIP,
+		Name:        "status",
+		Description: "status community description",
 	}
 
 	response, err := s.bob.CreateCommunity(description)
@@ -146,14 +143,11 @@ func (s *MessengerCommunitiesSuite) TestRetrieveCommunity() {
 }
 
 func (s *MessengerCommunitiesSuite) TestJoinCommunity() {
-	description := &protobuf.CommunityDescription{
-		Permissions: &protobuf.CommunityPermissions{
-			Access: protobuf.CommunityPermissions_NO_MEMBERSHIP,
-		},
-		Identity: &protobuf.ChatIdentity{
-			DisplayName: "status",
-			Description: "status community description",
-		},
+
+	description := &requests.CreateCommunity{
+		Membership:  protobuf.CommunityPermissions_NO_MEMBERSHIP,
+		Name:        "status",
+		Description: "status community description",
 	}
 
 	// Create an community chat
@@ -299,14 +293,10 @@ func (s *MessengerCommunitiesSuite) TestJoinCommunity() {
 }
 
 func (s *MessengerCommunitiesSuite) TestInviteUserToCommunity() {
-	description := &protobuf.CommunityDescription{
-		Permissions: &protobuf.CommunityPermissions{
-			Access: protobuf.CommunityPermissions_NO_MEMBERSHIP,
-		},
-		Identity: &protobuf.ChatIdentity{
-			DisplayName: "status",
-			Description: "status community description",
-		},
+	description := &requests.CreateCommunity{
+		Membership:  protobuf.CommunityPermissions_NO_MEMBERSHIP,
+		Name:        "status",
+		Description: "status community description",
 	}
 
 	// Create an community chat
@@ -348,14 +338,10 @@ func (s *MessengerCommunitiesSuite) TestInviteUserToCommunity() {
 }
 
 func (s *MessengerCommunitiesSuite) TestPostToCommunityChat() {
-	description := &protobuf.CommunityDescription{
-		Permissions: &protobuf.CommunityPermissions{
-			Access: protobuf.CommunityPermissions_INVITATION_ONLY,
-		},
-		Identity: &protobuf.ChatIdentity{
-			DisplayName: "status",
-			Description: "status community description",
-		},
+	description := &requests.CreateCommunity{
+		Membership:  protobuf.CommunityPermissions_INVITATION_ONLY,
+		Name:        "status",
+		Description: "status community description",
 	}
 
 	// Create an community chat
@@ -457,14 +443,10 @@ func (s *MessengerCommunitiesSuite) TestPostToCommunityChat() {
 }
 
 func (s *MessengerCommunitiesSuite) TestImportCommunity() {
-	description := &protobuf.CommunityDescription{
-		Permissions: &protobuf.CommunityPermissions{
-			Access: protobuf.CommunityPermissions_NO_MEMBERSHIP,
-		},
-		Identity: &protobuf.ChatIdentity{
-			DisplayName: "status",
-			Description: "status community description",
-		},
+	description := &requests.CreateCommunity{
+		Membership:  protobuf.CommunityPermissions_NO_MEMBERSHIP,
+		Name:        "status",
+		Description: "status community description",
 	}
 
 	// Create an community chat

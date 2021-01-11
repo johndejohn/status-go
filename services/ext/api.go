@@ -21,6 +21,7 @@ import (
 	"github.com/status-im/status-go/protocol/encryption/multidevice"
 	"github.com/status-im/status-go/protocol/protobuf"
 	"github.com/status-im/status-go/protocol/pushnotificationclient"
+	"github.com/status-im/status-go/protocol/requests"
 	"github.com/status-im/status-go/protocol/transport"
 	"github.com/status-im/status-go/protocol/urls"
 	"github.com/status-im/status-go/services/ext/mailservers"
@@ -338,8 +339,8 @@ func (api *PublicAPI) LeaveCommunity(parent context.Context, communityID string)
 }
 
 // CreateCommunity creates a new community with the provided description
-func (api *PublicAPI) CreateCommunity(description *protobuf.CommunityDescription) (*protocol.MessengerResponse, error) {
-	return api.service.messenger.CreateCommunity(description)
+func (api *PublicAPI) CreateCommunity(request *requests.CreateCommunity) (*protocol.MessengerResponse, error) {
+	return api.service.messenger.CreateCommunity(request)
 
 }
 
