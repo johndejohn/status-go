@@ -23,7 +23,6 @@ import (
 
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
-	enstypes "github.com/status-im/status-go/eth-node/types/ens"
 	userimage "github.com/status-im/status-go/images"
 	"github.com/status-im/status-go/multiaccounts"
 	"github.com/status-im/status-go/protocol/audio"
@@ -3438,72 +3437,6 @@ func (m *Messenger) UpdateMessageOutgoingStatus(id, newOutgoingStatus string) er
 // Identicon returns an identicon based on the input string
 func Identicon(id string) (string, error) {
 	return identicon.GenerateBase64(id)
-}
-
-// VerifyENSNames verifies that a registered ENS name matches the expected public key
-func (m *Messenger) VerifyENSNames(ctx context.Context, rpcEndpoint, contractAddress string) (*MessengerResponse, error) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	m.logger.Debug("verifying ENS Names", zap.String("endpoint", rpcEndpoint))
-	verifier := m.node.NewENSVerifier(m.logger)
-
-	var response MessengerResponse
-
-	var ensDetails []enstypes.ENSDetails
-
-	// Now in seconds
-	now := m.getTimesource().GetCurrentTime() / 1000
-	for _, contact := range m.allContacts {
-		if shouldENSBeVerified(contact, now) {
-			ensDetails = append(ensDetails, enstypes.ENSDetails{
-				PublicKeyString: contact.ID[2:],
-				Name:            contact.Name,
-			})
-		}
-	}
-
-	ensResponse, err := verifier.CheckBatch(ensDetails, rpcEndpoint, contractAddress)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, details := range ensResponse {
-		contact, ok := m.allContacts["0x"+details.PublicKeyString]
-		if !ok {
-			return nil, errors.New("contact must be existing")
-		}
-
-		m.logger.Debug("verifying ENS Name", zap.Any("details", details), zap.Any("contact", contact))
-
-		contact.ENSVerifiedAt = uint64(details.VerifiedAt)
-
-		if details.Error == nil {
-			contact.ENSVerified = details.Verified
-			// Increment count if not verified, even if no error
-			if !details.Verified {
-				contact.ENSVerificationRetries++
-			}
-			m.allContacts[contact.ID] = contact
-		} else {
-			m.logger.Warn("Failed to resolve ens name",
-				zap.String("name", details.Name),
-				zap.String("publicKey", details.PublicKeyString),
-				zap.Error(details.Error),
-			)
-			contact.ENSVerificationRetries++
-		}
-		response.Contacts = append(response.Contacts, contact)
-	}
-
-	if len(response.Contacts) != 0 {
-		err = m.persistence.SaveContacts(response.Contacts)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return &response, nil
 }
 
 // GenerateAlias name returns the generated name given a public key hex encoded prefixed with 0x

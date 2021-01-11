@@ -50,13 +50,15 @@ message CommunityInvitation {
 }
 
 message CommunityRequestJoin {
-  string ens_name = 1;
-  string chat_id = 2;
-  bytes community_id = 3;
+  uint64 clock = 1;
+  string ens_name = 2;
+  string chat_id = 3;
+  bytes community_id = 4;
 }
 
 message CommunityRequestJoinResponse {
-  CommunityDescription community = 1;
-  bool accepted = 2;
-  bytes grant = 3;
+  uint64 clock = 1;
+  CommunityDescription community = 2;
+  bool accepted = 3;
+  bytes grant = 4;
 }
