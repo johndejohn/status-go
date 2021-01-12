@@ -25,8 +25,9 @@ type ManagerSuite struct {
 func (s *ManagerSuite) SetupTest() {
 	db, err := sqlite.OpenInMemory()
 	s.Require().NoError(err)
-	m, err := NewManager(db, nil)
+	m, err := NewManager(db, nil, nil)
 	s.Require().NoError(err)
+	s.Require().NoError(m.Start())
 	s.manager = m
 }
 

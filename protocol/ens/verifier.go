@@ -63,7 +63,7 @@ func (v *Verifier) verifyLoop() {
 		select {
 
 		case <-v.quit:
-			break
+			return
 		case <-ticker.C:
 			if !v.online || v.rpcEndpoint == "" || v.contractAddress == "" {
 				continue

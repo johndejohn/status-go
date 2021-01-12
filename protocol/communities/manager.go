@@ -12,16 +12,20 @@ import (
 
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
+	"github.com/status-im/status-go/protocol/ens"
 	"github.com/status-im/status-go/protocol/protobuf"
 )
 
 type Manager struct {
-	persistence   *Persistence
-	subscriptions []chan *Subscription
-	logger        *zap.Logger
+	persistence     *Persistence
+	ensSubscription chan []*ens.ENSVerificationRecord
+	subscriptions   []chan *Subscription
+	ensVerifier     *ens.Verifier
+	logger          *zap.Logger
+	quit            chan struct{}
 }
 
-func NewManager(db *sql.DB, logger *zap.Logger) (*Manager, error) {
+func NewManager(db *sql.DB, logger *zap.Logger, verifier *ens.Verifier) (*Manager, error) {
 	var err error
 	if logger == nil {
 		if logger, err = zap.NewDevelopment(); err != nil {
@@ -29,13 +33,23 @@ func NewManager(db *sql.DB, logger *zap.Logger) (*Manager, error) {
 		}
 	}
 
-	return &Manager{
+	manager := &Manager{
 		logger: logger,
+		quit:   make(chan struct{}),
 		persistence: &Persistence{
 			logger: logger,
 			db:     db,
 		},
-	}, nil
+	}
+
+	if verifier != nil {
+
+		sub := verifier.Subscribe()
+		manager.ensSubscription = sub
+		manager.ensVerifier = verifier
+	}
+
+	return manager, nil
 }
 
 type Subscription struct {
@@ -49,7 +63,34 @@ func (m *Manager) Subscribe() chan *Subscription {
 	return subscription
 }
 
+func (m *Manager) Start() error {
+	if m.ensVerifier != nil {
+		m.runENSVerificationLoop()
+	}
+	return nil
+}
+
+func (m *Manager) runENSVerificationLoop() {
+	go func() {
+		for {
+			select {
+			case <-m.quit:
+				m.logger.Debug("quitting ens verification loop")
+				return
+			case records, more := <-m.ensSubscription:
+				if !more {
+					m.logger.Debug("no more ens records, quitting")
+					return
+				}
+				m.logger.Info("received records", zap.Any("records", records))
+
+			}
+		}
+	}()
+}
+
 func (m *Manager) Stop() error {
+	close(m.quit)
 	for _, c := range m.subscriptions {
 		close(c)
 	}

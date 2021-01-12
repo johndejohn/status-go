@@ -9,24 +9,25 @@ import (
 )
 
 type MessengerResponse struct {
-	Chats            []*Chat                         `json:"chats,omitempty"`
-	RemovedChats     []string                        `json:"removedChats,omitempty"`
-	Messages         []*common.Message               `json:"messages,omitempty"`
-	Contacts         []*Contact                      `json:"contacts,omitempty"`
-	Installations    []*multidevice.Installation     `json:"installations,omitempty"`
-	EmojiReactions   []*EmojiReaction                `json:"emojiReactions,omitempty"`
-	Invitations      []*GroupChatInvitation          `json:"invitations,omitempty"`
-	Communities      []*communities.Community        `json:"communities,omitempty"`
-	CommunityChanges []*communities.CommunityChanges `json:"communitiesChanges,omitempty"`
-	Filters          []*transport.Filter             `json:"filters,omitempty"`
-	RemovedFilters   []*transport.Filter             `json:"removedFilters,omitempty"`
-	Mailservers      []mailservers.Mailserver        `json:"mailservers,omitempty"`
-	MailserverTopics []mailservers.MailserverTopic   `json:"mailserverTopics,omitempty"`
-	MailserverRanges []mailservers.ChatRequestRange  `json:"mailserverRanges,omitempty"`
+	Chats                   []*Chat                         `json:"chats,omitempty"`
+	RemovedChats            []string                        `json:"removedChats,omitempty"`
+	Messages                []*common.Message               `json:"messages,omitempty"`
+	Contacts                []*Contact                      `json:"contacts,omitempty"`
+	Installations           []*multidevice.Installation     `json:"installations,omitempty"`
+	EmojiReactions          []*EmojiReaction                `json:"emojiReactions,omitempty"`
+	Invitations             []*GroupChatInvitation          `json:"invitations,omitempty"`
+	Communities             []*communities.Community        `json:"communities,omitempty"`
+	CommunityChanges        []*communities.CommunityChanges `json:"communitiesChanges,omitempty"`
+	CommunityRequestsToJoin []*communities.RequestToJoin    `json:"communityRequestsToJoin,omitempty"`
+	Filters                 []*transport.Filter             `json:"filters,omitempty"`
+	RemovedFilters          []*transport.Filter             `json:"removedFilters,omitempty"`
+	Mailservers             []mailservers.Mailserver        `json:"mailservers,omitempty"`
+	MailserverTopics        []mailservers.MailserverTopic   `json:"mailserverTopics,omitempty"`
+	MailserverRanges        []mailservers.ChatRequestRange  `json:"mailserverRanges,omitempty"`
 }
 
 func (m *MessengerResponse) IsEmpty() bool {
-	return len(m.Chats)+len(m.Messages)+len(m.Contacts)+len(m.Installations)+len(m.Invitations)+len(m.EmojiReactions)+len(m.Communities)+len(m.CommunityChanges)+len(m.Filters)+len(m.RemovedFilters)+len(m.RemovedChats)+len(m.MailserverTopics)+len(m.Mailservers)+len(m.MailserverRanges) == 0
+	return len(m.Chats)+len(m.Messages)+len(m.Contacts)+len(m.Installations)+len(m.Invitations)+len(m.EmojiReactions)+len(m.Communities)+len(m.CommunityChanges)+len(m.Filters)+len(m.RemovedFilters)+len(m.RemovedChats)+len(m.MailserverTopics)+len(m.Mailservers)+len(m.MailserverRanges)+len(m.CommunityRequestsToJoin) == 0
 }
 
 // Merge takes another response and appends the new Chats & new Messages and replaces
