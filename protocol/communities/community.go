@@ -298,13 +298,13 @@ func (o *Community) RemoveUserFromOrg(pk *ecdsa.PublicKey) (*protobuf.CommunityD
 }
 
 // TODO: this should accept a request from a user to join and perform any validation
-func (o *Community) AcceptRequestToJoin(pk *ecdsa.PublicKey) (*protobuf.CommunityRequestJoinResponse, error) {
+func (o *Community) AcceptRequestToJoin(pk *ecdsa.PublicKey) (*protobuf.CommunityRequestToJoinResponse, error) {
 
 	return nil, nil
 }
 
 // TODO: this should decline a request from a user to join
-func (o *Community) DeclineRequestToJoin(pk *ecdsa.PublicKey) (*protobuf.CommunityRequestJoinResponse, error) {
+func (o *Community) DeclineRequestToJoin(pk *ecdsa.PublicKey) (*protobuf.CommunityRequestToJoinResponse, error) {
 	return nil, nil
 }
 
@@ -423,8 +423,8 @@ func (o *Community) HandleCommunityDescription(signer *ecdsa.PublicKey, descript
 	return response, nil
 }
 
-// HandleRequestJoin handles a request, checks that the right permissions are applied and returns an CommunityRequestJoinResponse
-func (o *Community) HandleRequestJoin(signer *ecdsa.PublicKey, request *protobuf.CommunityRequestJoin) error {
+// HandleRequestToJoin handles a request, checks that the right permissions are applied
+func (o *Community) HandleRequestToJoin(signer *ecdsa.PublicKey, request *protobuf.CommunityRequestToJoin) error {
 	o.mutex.Lock()
 	defer o.mutex.Unlock()
 
@@ -439,10 +439,10 @@ func (o *Community) HandleRequestJoin(signer *ecdsa.PublicKey, request *protobuf
 	}
 
 	if len(request.ChatId) != 0 {
-		return o.handleRequestJoinWithChatID(request)
+		return o.handleRequestToJoinWithChatID(request)
 	}
 
-	err := o.handleRequestJoinWithoutChatID(request)
+	err := o.handleRequestToJoinWithoutChatID(request)
 	if err != nil {
 		return err
 	}
@@ -455,7 +455,7 @@ func (o *Community) IsAdmin() bool {
 	return o.config.PrivateKey != nil
 }
 
-func (o *Community) handleRequestJoinWithChatID(request *protobuf.CommunityRequestJoin) error {
+func (o *Community) handleRequestToJoinWithChatID(request *protobuf.CommunityRequestToJoin) error {
 
 	chat, ok := o.config.CommunityDescription.Chats[request.ChatId]
 
@@ -475,7 +475,7 @@ func (o *Community) handleRequestJoinWithChatID(request *protobuf.CommunityReque
 	return nil
 }
 
-func (o *Community) handleRequestJoinWithoutChatID(request *protobuf.CommunityRequestJoin) error {
+func (o *Community) handleRequestToJoinWithoutChatID(request *protobuf.CommunityRequestToJoin) error {
 
 	// If they want access to the org only, check that the org is ON_REQUEST
 	if o.config.CommunityDescription.Permissions.Access != protobuf.CommunityPermissions_ON_REQUEST {
@@ -485,7 +485,7 @@ func (o *Community) handleRequestJoinWithoutChatID(request *protobuf.CommunityRe
 	return nil
 }
 
-func (o *Community) ID() []byte {
+func (o *Community) ID() types.HexBytes {
 	return crypto.CompressPubkey(o.config.ID)
 }
 
@@ -495,6 +495,10 @@ func (o *Community) IDString() string {
 
 func (o *Community) PrivateKey() *ecdsa.PrivateKey {
 	return o.config.PrivateKey
+}
+
+func (o *Community) PublicKey() *ecdsa.PublicKey {
+	return o.config.ID
 }
 
 func (o *Community) marshaledDescription() ([]byte, error) {
@@ -700,6 +704,10 @@ func (o *Community) buildGrant(key *ecdsa.PublicKey, chatID string) ([]byte, err
 
 func (o *Community) increaseClock() {
 	o.config.CommunityDescription.Clock = o.nextClock()
+}
+
+func (o *Community) Clock() uint64 {
+	return o.config.CommunityDescription.Clock
 }
 
 func (o *Community) nextClock() uint64 {

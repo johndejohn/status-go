@@ -271,7 +271,7 @@ func (s *CommunitySuite) TestDeclineRequestToJoin() {
 	// TEST CASE 3: Valid
 }
 
-func (s *CommunitySuite) TestHandleRequestJoin() {
+func (s *CommunitySuite) TestHandleRequestToJoin() {
 	description := &protobuf.CommunityDescription{}
 
 	key, err := crypto.GenerateKey()
@@ -279,22 +279,22 @@ func (s *CommunitySuite) TestHandleRequestJoin() {
 
 	signer := &key.PublicKey
 
-	request := &protobuf.CommunityRequestJoin{
+	request := &protobuf.CommunityRequestToJoin{
 		EnsName:     "donvanvliet.stateofus.eth",
 		CommunityId: s.communityID,
 	}
 
-	requestWithChatID := &protobuf.CommunityRequestJoin{
+	requestWithChatID := &protobuf.CommunityRequestToJoin{
 		EnsName:     "donvanvliet.stateofus.eth",
 		CommunityId: s.communityID,
 		ChatId:      testChatID1,
 	}
 
-	requestWithoutENS := &protobuf.CommunityRequestJoin{
+	requestWithoutENS := &protobuf.CommunityRequestToJoin{
 		CommunityId: s.communityID,
 	}
 
-	requestWithChatWithoutENS := &protobuf.CommunityRequestJoin{
+	requestWithChatWithoutENS := &protobuf.CommunityRequestToJoin{
 		CommunityId: s.communityID,
 		ChatId:      testChatID1,
 	}
@@ -313,7 +313,7 @@ func (s *CommunitySuite) TestHandleRequestJoin() {
 	testCases := []struct {
 		name    string
 		config  Config
-		request *protobuf.CommunityRequestJoin
+		request *protobuf.CommunityRequestToJoin
 		signer  *ecdsa.PublicKey
 		err     error
 	}{
@@ -421,7 +421,7 @@ func (s *CommunitySuite) TestHandleRequestJoin() {
 		s.Run(tc.name, func() {
 			org, err := New(tc.config)
 			s.Require().NoError(err)
-			err = org.HandleRequestJoin(tc.signer, tc.request)
+			err = org.HandleRequestToJoin(tc.signer, tc.request)
 			s.Require().Equal(tc.err, err)
 		})
 	}

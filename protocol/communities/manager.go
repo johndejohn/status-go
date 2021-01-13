@@ -12,8 +12,10 @@ import (
 
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
+	"github.com/status-im/status-go/protocol/common"
 	"github.com/status-im/status-go/protocol/ens"
 	"github.com/status-im/status-go/protocol/protobuf"
+	"github.com/status-im/status-go/protocol/requests"
 )
 
 type Manager struct {
@@ -21,11 +23,16 @@ type Manager struct {
 	ensSubscription chan []*ens.ENSVerificationRecord
 	subscriptions   []chan *Subscription
 	ensVerifier     *ens.Verifier
+	identity        *ecdsa.PublicKey
 	logger          *zap.Logger
 	quit            chan struct{}
 }
 
-func NewManager(db *sql.DB, logger *zap.Logger, verifier *ens.Verifier) (*Manager, error) {
+func NewManager(identity *ecdsa.PublicKey, db *sql.DB, logger *zap.Logger, verifier *ens.Verifier) (*Manager, error) {
+	if identity == nil {
+		return nil, errors.New("empty identity")
+	}
+
 	var err error
 	if logger == nil {
 		if logger, err = zap.NewDevelopment(); err != nil {
@@ -34,8 +41,9 @@ func NewManager(db *sql.DB, logger *zap.Logger, verifier *ens.Verifier) (*Manage
 	}
 
 	manager := &Manager{
-		logger: logger,
-		quit:   make(chan struct{}),
+		logger:   logger,
+		identity: identity,
+		quit:     make(chan struct{}),
 		persistence: &Persistence{
 			logger: logger,
 			db:     db,
@@ -155,8 +163,8 @@ func (m *Manager) CreateCommunity(description *protobuf.CommunityDescription) (*
 	return community, nil
 }
 
-func (m *Manager) ExportCommunity(idString string) (*ecdsa.PrivateKey, error) {
-	community, err := m.GetByIDString(idString)
+func (m *Manager) ExportCommunity(id types.HexBytes) (*ecdsa.PrivateKey, error) {
+	community, err := m.GetByID(id)
 	if err != nil {
 		return nil, err
 	}
@@ -204,8 +212,8 @@ func (m *Manager) ImportCommunity(key *ecdsa.PrivateKey) (*Community, error) {
 	return community, nil
 }
 
-func (m *Manager) CreateChat(idString string, chat *protobuf.CommunityChat) (*Community, *CommunityChanges, error) {
-	community, err := m.GetByIDString(idString)
+func (m *Manager) CreateChat(communityID types.HexBytes, chat *protobuf.CommunityChat) (*Community, *CommunityChanges, error) {
+	community, err := m.GetByID(communityID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -260,6 +268,12 @@ func (m *Manager) HandleCommunityDescriptionMessage(signer *ecdsa.PublicKey, des
 		return nil, err
 	}
 
+	// We mark our requests as completed, though maybe we should mark
+	// any request for any user that has been added as completed
+	if err := m.markRequestToJoin(m.identity, community); err != nil {
+		return nil, err
+	}
+
 	return community, nil
 }
 
@@ -275,6 +289,66 @@ func (m *Manager) HandleCommunityInvitation(signer *ecdsa.PublicKey, invitation 
 	// Save grant
 
 	return community, nil
+}
+
+// markRequestToJoin marks all the pending requests to join as completed
+// if we are members
+func (m *Manager) markRequestToJoin(pk *ecdsa.PublicKey, community *Community) error {
+	m.logger.Debug("Checking if needs to be marked", zap.Any("identity", m.identity))
+	if community.HasMember(pk) {
+		m.logger.Debug("makring if needs to be marked")
+		return m.persistence.SetRequestToJoinState(community.ID(), RequestToJoinStateAccepted)
+	}
+	return nil
+}
+
+func (m *Manager) AcceptRequestToJoin(request *requests.AcceptRequestToJoinCommunity) (*Community, error) {
+	dbRequest, err := m.persistence.GetRequestToJoin(request.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	community, err := m.GetByID(dbRequest.CommunityID)
+	if err != nil {
+		return nil, err
+	}
+
+	pk, err := common.HexToPubkey(dbRequest.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return m.inviteUserToCommunity(community, pk)
+}
+
+func (m *Manager) HandleCommunityRequestToJoin(signer *ecdsa.PublicKey, request *protobuf.CommunityRequestToJoin) (*RequestToJoin, error) {
+	community, err := m.persistence.GetByID(request.CommunityId)
+	if err != nil {
+		return nil, err
+	}
+	if community == nil {
+		return nil, ErrOrgNotFound
+	}
+
+	if err := community.HandleRequestToJoin(signer, request); err != nil {
+		return nil, err
+	}
+
+	requestToJoin := &RequestToJoin{
+		PublicKey:   common.PubkeyToHex(signer),
+		Clock:       request.Clock,
+		ENSName:     request.EnsName,
+		CommunityID: request.CommunityId,
+		State:       RequestToJoinStatePending,
+	}
+
+	requestToJoin.CalculateID()
+
+	if err := m.persistence.SaveRequestToJoin(requestToJoin); err != nil {
+		return nil, err
+	}
+
+	return requestToJoin, nil
 }
 
 func (m *Manager) HandleWrappedCommunityDescriptionMessage(payload []byte) (*Community, error) {
@@ -303,8 +377,8 @@ func (m *Manager) HandleWrappedCommunityDescriptionMessage(payload []byte) (*Com
 	return m.HandleCommunityDescriptionMessage(signer, description, payload)
 }
 
-func (m *Manager) JoinCommunity(idString string) (*Community, error) {
-	community, err := m.GetByIDString(idString)
+func (m *Manager) JoinCommunity(id types.HexBytes) (*Community, error) {
+	community, err := m.GetByID(id)
 	if err != nil {
 		return nil, err
 	}
@@ -319,8 +393,8 @@ func (m *Manager) JoinCommunity(idString string) (*Community, error) {
 	return community, nil
 }
 
-func (m *Manager) LeaveCommunity(idString string) (*Community, error) {
-	community, err := m.GetByIDString(idString)
+func (m *Manager) LeaveCommunity(id types.HexBytes) (*Community, error) {
+	community, err := m.GetByID(id)
 	if err != nil {
 		return nil, err
 	}
@@ -335,15 +409,7 @@ func (m *Manager) LeaveCommunity(idString string) (*Community, error) {
 	return community, nil
 }
 
-func (m *Manager) InviteUserToCommunity(idString string, pk *ecdsa.PublicKey) (*Community, error) {
-	community, err := m.GetByIDString(idString)
-	if err != nil {
-		return nil, err
-	}
-	if community == nil {
-		return nil, ErrOrgNotFound
-	}
-
+func (m *Manager) inviteUserToCommunity(community *Community, pk *ecdsa.PublicKey) (*Community, error) {
 	invitation, err := community.InviteUserToOrg(pk)
 	if err != nil {
 		return nil, err
@@ -354,13 +420,30 @@ func (m *Manager) InviteUserToCommunity(idString string, pk *ecdsa.PublicKey) (*
 		return nil, err
 	}
 
+	// We mark the user request (if any) as completed
+	if err := m.markRequestToJoin(pk, community); err != nil {
+		return nil, err
+	}
+
 	m.publish(&Subscription{Community: community, Invitation: invitation})
 
 	return community, nil
 }
 
-func (m *Manager) RemoveUserFromCommunity(idString string, pk *ecdsa.PublicKey) (*Community, error) {
-	community, err := m.GetByIDString(idString)
+func (m *Manager) InviteUserToCommunity(communityID types.HexBytes, pk *ecdsa.PublicKey) (*Community, error) {
+	community, err := m.GetByID(communityID)
+	if err != nil {
+		return nil, err
+	}
+	if community == nil {
+		return nil, ErrOrgNotFound
+	}
+
+	return m.inviteUserToCommunity(community, pk)
+}
+
+func (m *Manager) RemoveUserFromCommunity(id types.HexBytes, pk *ecdsa.PublicKey) (*Community, error) {
+	community, err := m.GetByID(id)
 	if err != nil {
 		return nil, err
 	}
@@ -383,16 +466,53 @@ func (m *Manager) RemoveUserFromCommunity(idString string, pk *ecdsa.PublicKey) 
 	return community, nil
 }
 
+func (m *Manager) GetByID(id []byte) (*Community, error) {
+	return m.persistence.GetByID(id)
+}
+
 func (m *Manager) GetByIDString(idString string) (*Community, error) {
 	id, err := types.DecodeHex(idString)
 	if err != nil {
 		return nil, err
 	}
-	return m.persistence.GetByID(id)
+	return m.GetByID(id)
 }
 
-func (m *Manager) CanPost(pk *ecdsa.PublicKey, orgIDString, chatID string, grant []byte) (bool, error) {
-	community, err := m.GetByIDString(orgIDString)
+func (m *Manager) RequestToJoin(requester *ecdsa.PublicKey, request *requests.RequestToJoinCommunity) (*Community, *RequestToJoin, error) {
+	community, err := m.persistence.GetByID(request.CommunityID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	clock := community.Clock() + 1
+	requestToJoin := &RequestToJoin{
+		PublicKey:   common.PubkeyToHex(requester),
+		Clock:       clock,
+		ENSName:     request.ENSName,
+		CommunityID: request.CommunityID,
+		State:       RequestToJoinStatePending,
+		Our:         true,
+	}
+
+	requestToJoin.CalculateID()
+
+	if err := m.persistence.SaveRequestToJoin(requestToJoin); err != nil {
+		return nil, nil, err
+	}
+
+	return community, requestToJoin, nil
+}
+
+func (m *Manager) PendingRequestsToJoinForUser(pk *ecdsa.PublicKey) ([]*RequestToJoin, error) {
+	return m.persistence.PendingRequestsToJoinForUser(common.PubkeyToHex(pk))
+}
+
+func (m *Manager) PendingRequestsToJoinForCommunity(id types.HexBytes) ([]*RequestToJoin, error) {
+	return m.persistence.PendingRequestsToJoinForCommunity(id)
+}
+
+func (m *Manager) CanPost(pk *ecdsa.PublicKey, communityID string, chatID string, grant []byte) (bool, error) {
+	community, err := m.GetByIDString(communityID)
 	if err != nil {
 		return false, err
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/protocol/common"
+	"github.com/status-im/status-go/protocol/communities"
 	"github.com/status-im/status-go/protocol/protobuf"
 	"github.com/status-im/status-go/protocol/requests"
 	"github.com/status-im/status-go/protocol/tt"
@@ -167,7 +168,7 @@ func (s *MessengerCommunitiesSuite) TestJoinCommunity() {
 			Description: "status-core community chat",
 		},
 	}
-	response, err = s.bob.CreateCommunityChat(community.IDString(), orgChat)
+	response, err = s.bob.CreateCommunityChat(community.ID(), orgChat)
 	s.Require().NoError(err)
 	s.Require().NotNil(response)
 	s.Require().Len(response.Communities, 1)
@@ -221,7 +222,7 @@ func (s *MessengerCommunitiesSuite) TestJoinCommunity() {
 	s.Require().Equal(community.IDString(), response.Messages[0].CommunityID)
 
 	// We join the org
-	response, err = s.alice.JoinCommunity(community.IDString())
+	response, err = s.alice.JoinCommunity(community.ID())
 	s.Require().NoError(err)
 	s.Require().NotNil(response)
 	s.Require().Len(response.Communities, 1)
@@ -248,7 +249,7 @@ func (s *MessengerCommunitiesSuite) TestJoinCommunity() {
 			Description: "status-core-ui community chat",
 		},
 	}
-	response, err = s.bob.CreateCommunityChat(community.IDString(), orgChat)
+	response, err = s.bob.CreateCommunityChat(community.ID(), orgChat)
 	s.Require().NoError(err)
 	s.Require().NotNil(response)
 	s.Require().Len(response.Communities, 1)
@@ -284,7 +285,7 @@ func (s *MessengerCommunitiesSuite) TestJoinCommunity() {
 	s.Require().True(strings.HasPrefix(createdChat.ID, community.IDString()))
 
 	// We leave the org
-	response, err = s.alice.LeaveCommunity(community.IDString())
+	response, err = s.alice.LeaveCommunity(community.ID())
 	s.Require().NoError(err)
 	s.Require().NotNil(response)
 	s.Require().Len(response.Communities, 1)
@@ -307,7 +308,7 @@ func (s *MessengerCommunitiesSuite) TestInviteUserToCommunity() {
 
 	community := response.Communities[0]
 
-	response, err = s.bob.InviteUserToCommunity(community.IDString(), common.PubkeyToHex(&s.alice.identity.PublicKey))
+	response, err = s.bob.InviteUserToCommunity(community.ID(), common.PubkeyToHex(&s.alice.identity.PublicKey))
 	s.Require().NoError(err)
 	s.Require().NotNil(response)
 	s.Require().Len(response.Communities, 1)
@@ -363,13 +364,13 @@ func (s *MessengerCommunitiesSuite) TestPostToCommunityChat() {
 		},
 	}
 
-	response, err = s.bob.CreateCommunityChat(community.IDString(), orgChat)
+	response, err = s.bob.CreateCommunityChat(community.ID(), orgChat)
 	s.Require().NoError(err)
 	s.Require().NotNil(response)
 	s.Require().Len(response.Communities, 1)
 	s.Require().Len(response.Chats, 1)
 
-	response, err = s.bob.InviteUserToCommunity(community.IDString(), common.PubkeyToHex(&s.alice.identity.PublicKey))
+	response, err = s.bob.InviteUserToCommunity(community.ID(), common.PubkeyToHex(&s.alice.identity.PublicKey))
 	s.Require().NoError(err)
 	s.Require().NotNil(response)
 	s.Require().Len(response.Communities, 1)
@@ -396,7 +397,7 @@ func (s *MessengerCommunitiesSuite) TestPostToCommunityChat() {
 	s.Require().Len(response.Communities, 1)
 
 	// We join the org
-	response, err = s.alice.JoinCommunity(community.IDString())
+	response, err = s.alice.JoinCommunity(community.ID())
 	s.Require().NoError(err)
 	s.Require().NotNil(response)
 	s.Require().Len(response.Communities, 1)
@@ -459,7 +460,7 @@ func (s *MessengerCommunitiesSuite) TestImportCommunity() {
 
 	community := response.Communities[0]
 
-	privateKey, err := s.bob.ExportCommunity(community.IDString())
+	privateKey, err := s.bob.ExportCommunity(community.ID())
 	s.Require().NoError(err)
 
 	response, err = s.alice.ImportCommunity(privateKey)
@@ -470,7 +471,7 @@ func (s *MessengerCommunitiesSuite) TestImportCommunity() {
 	newUser, err := crypto.GenerateKey()
 	s.Require().NoError(err)
 
-	_, err = s.bob.InviteUserToCommunity(community.IDString(), common.PubkeyToHex(&newUser.PublicKey))
+	_, err = s.bob.InviteUserToCommunity(community.ID(), common.PubkeyToHex(&newUser.PublicKey))
 	s.Require().NoError(err)
 
 	// Pull message and make sure org is received
@@ -490,4 +491,139 @@ func (s *MessengerCommunitiesSuite) TestImportCommunity() {
 	community = response.Communities[0]
 	s.Require().True(community.Joined())
 	s.Require().True(community.IsAdmin())
+}
+
+func (s *MessengerCommunitiesSuite) TestRequestAccess() {
+	description := &requests.CreateCommunity{
+		Membership:  protobuf.CommunityPermissions_ON_REQUEST,
+		Name:        "status",
+		Description: "status community description",
+	}
+
+	// Create an community chat
+	response, err := s.bob.CreateCommunity(description)
+	s.Require().NoError(err)
+	s.Require().NotNil(response)
+	s.Require().Len(response.Communities, 1)
+
+	community := response.Communities[0]
+
+	chat := CreateOneToOneChat(common.PubkeyToHex(&s.alice.identity.PublicKey), &s.alice.identity.PublicKey, s.alice.transport)
+
+	s.Require().NoError(s.bob.SaveChat(&chat))
+
+	message := buildTestMessage(chat)
+	message.CommunityID = community.IDString()
+
+	// We send a community link to alice
+	response, err = s.bob.SendChatMessage(context.Background(), message)
+	s.Require().NoError(err)
+	s.Require().NotNil(response)
+
+	// Retrieve community link & community
+	err = tt.RetryWithBackOff(func() error {
+		response, err = s.alice.RetrieveAll()
+		if err != nil {
+			return err
+		}
+		if len(response.Communities) == 0 {
+			return errors.New("message not received")
+		}
+		return nil
+	})
+
+	s.Require().NoError(err)
+
+	request := &requests.RequestToJoinCommunity{CommunityID: community.ID()}
+	// We try to join the org
+	response, err = s.alice.RequestToJoinCommunity(request)
+	s.Require().NoError(err)
+	s.Require().NotNil(response)
+	s.Require().Len(response.RequestsToJoinCommunity, 1)
+
+	requestToJoin1 := response.RequestsToJoinCommunity[0]
+	s.Require().NotNil(requestToJoin1)
+	s.Require().Equal(community.ID(), requestToJoin1.CommunityID)
+	s.Require().True(requestToJoin1.Our)
+	s.Require().NotEmpty(requestToJoin1.ID)
+	s.Require().NotEmpty(requestToJoin1.Clock)
+	s.Require().Equal(requestToJoin1.PublicKey, common.PubkeyToHex(&s.alice.identity.PublicKey))
+	s.Require().Equal(communities.RequestToJoinStatePending, requestToJoin1.State)
+
+	// pull to make sure it has been saved
+	requestsToJoin, err := s.alice.MyPendingRequestsToJoin()
+	s.Require().NoError(err)
+	s.Require().Len(requestsToJoin, 1)
+
+	// Retrieve request to join
+	err = tt.RetryWithBackOff(func() error {
+		response, err = s.bob.RetrieveAll()
+		if err != nil {
+			return err
+		}
+		if len(response.RequestsToJoinCommunity) == 0 {
+			return errors.New("request to join community not received")
+		}
+		return nil
+	})
+	s.Require().NoError(err)
+	s.Require().Len(response.RequestsToJoinCommunity, 1)
+
+	requestToJoin2 := response.RequestsToJoinCommunity[0]
+
+	s.Require().NotNil(requestToJoin2)
+	s.Require().Equal(community.ID(), requestToJoin2.CommunityID)
+	s.Require().False(requestToJoin2.Our)
+	s.Require().NotEmpty(requestToJoin2.ID)
+	s.Require().NotEmpty(requestToJoin2.Clock)
+	s.Require().Equal(requestToJoin2.PublicKey, common.PubkeyToHex(&s.alice.identity.PublicKey))
+	s.Require().Equal(communities.RequestToJoinStatePending, requestToJoin2.State)
+
+	s.Require().Equal(requestToJoin1.ID, requestToJoin2.ID)
+
+	// Accept request
+
+	acceptRequestToJoin := &requests.AcceptRequestToJoinCommunity{ID: requestToJoin1.ID}
+
+	response, err = s.bob.AcceptRequestToJoinCommunity(acceptRequestToJoin)
+	s.Require().NoError(err)
+	s.Require().NotNil(response)
+
+	s.Require().Len(response.Communities, 1)
+
+	updatedCommunity := response.Communities[0]
+
+	s.Require().NotNil(updatedCommunity)
+	s.Require().True(updatedCommunity.HasMember(&s.alice.identity.PublicKey))
+
+	// Pull message and make sure org is received
+	err = tt.RetryWithBackOff(func() error {
+		response, err = s.alice.RetrieveAll()
+		if err != nil {
+			return err
+		}
+		if len(response.Communities) == 0 {
+			return errors.New("community not received")
+		}
+		return nil
+	})
+
+	s.Require().NoError(err)
+	s.Require().NotNil(response)
+	s.Require().Len(response.Communities, 1)
+
+	aliceCommunity := response.Communities[0]
+
+	s.Require().Equal(community.ID(), aliceCommunity.ID())
+	s.Require().True(aliceCommunity.HasMember(&s.alice.identity.PublicKey))
+
+	// Make sure the requests are not pending on either sides
+	requestsToJoin, err = s.bob.PendingRequestsToJoinForCommunity(community.ID())
+	s.Require().NoError(err)
+	s.Require().Len(requestsToJoin, 0)
+
+	requestsToJoin, err = s.alice.MyPendingRequestsToJoin()
+	s.Require().NoError(err)
+	s.Require().Len(requestsToJoin, 0)
+
 }

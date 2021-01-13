@@ -274,7 +274,7 @@ func NewMessenger(
 
 	ensVerifier := ens.New(node, logger, transp, database, c.verifyENSURL, c.verifyENSContractAddress)
 
-	communitiesManager, err := communities.NewManager(database, logger, ensVerifier)
+	communitiesManager, err := communities.NewManager(&identity.PublicKey, database, logger, ensVerifier)
 	if err != nil {
 		return nil, err
 	}
@@ -961,13 +961,29 @@ func (m *Messenger) Init() error {
 		publicKeys    []*ecdsa.PublicKey
 	)
 
-	communities, err := m.communitiesManager.Joined()
+	joinedCommunities, err := m.communitiesManager.Joined()
 	if err != nil {
 		return err
 	}
-	for _, org := range communities {
+	for _, org := range joinedCommunities {
 		// the org advertise on the public topic derived by the pk
 		publicChatIDs = append(publicChatIDs, org.IDString())
+	}
+
+	// Init filters for the communities we are an admin of
+	var adminCommunitiesPks []*ecdsa.PrivateKey
+	adminCommunities, err := m.communitiesManager.Created()
+	if err != nil {
+		return err
+	}
+
+	for _, c := range adminCommunities {
+		adminCommunitiesPks = append(adminCommunitiesPks, c.PrivateKey())
+	}
+
+	_, err = m.transport.InitCommunityFilters(adminCommunitiesPks)
+	if err != nil {
+		return err
 	}
 
 	// Get chat IDs and public keys from the existing chats.
@@ -2900,10 +2916,19 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						invitation := msg.ParsedMessage.Interface().(protobuf.CommunityInvitation)
 						err = m.handler.HandleCommunityInvitation(messageState, publicKey, invitation, invitation.CommunityDescription)
 						if err != nil {
-							logger.Warn("failed to handle CommunityDescription", zap.Error(err))
+							logger.Warn("failed to handle CommunityInvitation", zap.Error(err))
 							allMessagesProcessed = false
 							continue
 						}
+					case protobuf.CommunityRequestToJoin:
+						logger.Debug("Handling CommunityRequestToJoin")
+						request := msg.ParsedMessage.Interface().(protobuf.CommunityRequestToJoin)
+						err = m.handler.HandleCommunityRequestToJoin(messageState, publicKey, request)
+						if err != nil {
+							logger.Warn("failed to handle CommunityRequestToJoin", zap.Error(err))
+							continue
+						}
+
 					default:
 						// Check if is an encrypted PushNotificationRegistration
 						if msg.Type == protobuf.ApplicationMetadataMessage_PUSH_NOTIFICATION_REGISTRATION {

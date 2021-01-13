@@ -49,14 +49,14 @@ message CommunityInvitation {
   bytes public_key = 4;
 }
 
-message CommunityRequestJoin {
+message CommunityRequestToJoin {
   uint64 clock = 1;
   string ens_name = 2;
   string chat_id = 3;
   bytes community_id = 4;
 }
 
-message CommunityRequestJoinResponse {
+message CommunityRequestToJoinResponse {
   uint64 clock = 1;
   CommunityDescription community = 2;
   bool accepted = 3;

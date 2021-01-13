@@ -329,12 +329,12 @@ func (api *PublicAPI) JoinedCommunities(parent context.Context) ([]*communities.
 }
 
 // JoinCommunity joins a community with the given ID
-func (api *PublicAPI) JoinCommunity(parent context.Context, communityID string) (*protocol.MessengerResponse, error) {
+func (api *PublicAPI) JoinCommunity(parent context.Context, communityID types.HexBytes) (*protocol.MessengerResponse, error) {
 	return api.service.messenger.JoinCommunity(communityID)
 }
 
 // LeaveCommunity leaves a commuity with the given ID
-func (api *PublicAPI) LeaveCommunity(parent context.Context, communityID string) (*protocol.MessengerResponse, error) {
+func (api *PublicAPI) LeaveCommunity(parent context.Context, communityID types.HexBytes) (*protocol.MessengerResponse, error) {
 	return api.service.messenger.LeaveCommunity(communityID)
 }
 
@@ -345,12 +345,12 @@ func (api *PublicAPI) CreateCommunity(request *requests.CreateCommunity) (*proto
 }
 
 // ExportCommunity exports the private key of the community with given ID
-func (api *PublicAPI) ExportCommunity(id string) (string, error) {
+func (api *PublicAPI) ExportCommunity(id types.HexBytes) (types.HexBytes, error) {
 	key, err := api.service.messenger.ExportCommunity(id)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return types.EncodeHex(crypto.FromECDSA(key)), nil
+	return crypto.FromECDSA(key), nil
 }
 
 // ImportCommunity imports a community with the given private key in hex
@@ -365,18 +365,33 @@ func (api *PublicAPI) ImportCommunity(hexPrivateKey string) (*protocol.Messenger
 }
 
 // CreateCommunityChat creates a community chat in the given community
-func (api *PublicAPI) CreateCommunityChat(orgID string, c *protobuf.CommunityChat) (*protocol.MessengerResponse, error) {
-	return api.service.messenger.CreateCommunityChat(orgID, c)
+func (api *PublicAPI) CreateCommunityChat(communityID types.HexBytes, c *protobuf.CommunityChat) (*protocol.MessengerResponse, error) {
+	return api.service.messenger.CreateCommunityChat(communityID, c)
 }
 
 // InviteUserToCommunity invites the user with pk to the community with ID
-func (api *PublicAPI) InviteUserToCommunity(orgID, userPublicKey string) (*protocol.MessengerResponse, error) {
-	return api.service.messenger.InviteUserToCommunity(orgID, userPublicKey)
+func (api *PublicAPI) InviteUserToCommunity(communityID types.HexBytes, userPublicKey string) (*protocol.MessengerResponse, error) {
+	return api.service.messenger.InviteUserToCommunity(communityID, userPublicKey)
 }
 
 // RemoveUserFromCommunity removes the user with pk from the community with ID
-func (api *PublicAPI) RemoveUserFromCommunity(orgID, userPublicKey string) (*protocol.MessengerResponse, error) {
-	return api.service.messenger.RemoveUserFromCommunity(orgID, userPublicKey)
+func (api *PublicAPI) RemoveUserFromCommunity(communityID types.HexBytes, userPublicKey string) (*protocol.MessengerResponse, error) {
+	return api.service.messenger.RemoveUserFromCommunity(communityID, userPublicKey)
+}
+
+// MyPendingRequestsToJoin returns the pending requests for the logged in user
+func (api *PublicAPI) MyPendingRequestsToJoin() ([]*communities.RequestToJoin, error) {
+	return api.service.messenger.MyPendingRequestsToJoin()
+}
+
+// PendingRequestsToJoinForCommunity returns the pending requests to join for a given community
+func (api *PublicAPI) PendingRequestsToJoinForCommunity(id types.HexBytes) ([]*communities.RequestToJoin, error) {
+	return api.service.messenger.PendingRequestsToJoinForCommunity(id)
+}
+
+// AcceptRequestToJoinCommunity accepts a pending request to join a community
+func (api *PublicAPI) AcceptRequestToJoinCommunity(request *requests.AcceptRequestToJoinCommunity) (*protocol.MessengerResponse, error) {
+	return api.service.messenger.AcceptRequestToJoinCommunity(request)
 }
 
 type ApplicationMessagesResponse struct {

@@ -137,3 +137,61 @@ func unmarshalCommunityFromDB(publicKeyBytes, privateKeyBytes, descriptionBytes 
 	}
 	return New(config)
 }
+
+func (p *Persistence) SaveRequestToJoin(request *RequestToJoin) error {
+	_, err := p.db.Exec(`INSERT INTO communities_requests_to_join(id,public_key,clock,ens_name,chat_id,community_id,state) VALUES (?, ?, ?, ?, ?, ?, ?)`, request.ID, request.PublicKey, request.Clock, request.ENSName, request.ChatID, request.CommunityID, request.State)
+	return err
+}
+
+func (p *Persistence) PendingRequestsToJoinForUser(pk string) ([]*RequestToJoin, error) {
+	var requests []*RequestToJoin
+	rows, err := p.db.Query(`SELECT id,public_key,clock,ens_name,chat_id,community_id,state FROM communities_requests_to_join WHERE state = ? AND public_key = ?`, RequestToJoinStatePending, pk)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		request := &RequestToJoin{}
+		err := rows.Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.ChatID, &request.CommunityID, &request.State)
+		if err != nil {
+			return nil, err
+		}
+		requests = append(requests, request)
+	}
+	return requests, nil
+}
+
+func (p *Persistence) PendingRequestsToJoinForCommunity(id []byte) ([]*RequestToJoin, error) {
+	var requests []*RequestToJoin
+	rows, err := p.db.Query(`SELECT id,public_key,clock,ens_name,chat_id,community_id,state FROM communities_requests_to_join WHERE state = ? AND community_id = ?`, RequestToJoinStatePending, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		request := &RequestToJoin{}
+		err := rows.Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.ChatID, &request.CommunityID, &request.State)
+		if err != nil {
+			return nil, err
+		}
+		requests = append(requests, request)
+	}
+	return requests, nil
+}
+
+func (p *Persistence) SetRequestToJoinState(communityID []byte, state uint) error {
+	_, err := p.db.Exec(`UPDATE communities_requests_to_join SET state = ? WHERE community_id = ?`, state, communityID)
+	return err
+}
+
+func (p *Persistence) GetRequestToJoin(id []byte) (*RequestToJoin, error) {
+	request := &RequestToJoin{}
+	err := p.db.QueryRow(`SELECT id,public_key,clock,ens_name,chat_id,community_id,state FROM communities_requests_to_join WHERE id = ?`, id).Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.ChatID, &request.CommunityID, &request.State)
+	if err != nil {
+		return nil, err
+	}
+
+	return request, nil
+}

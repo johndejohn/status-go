@@ -131,12 +131,33 @@ func (a *Transport) InitPublicFilters(chatIDs []string) ([]*transport.Filter, er
 	return a.filters.InitPublicFilters(chatIDs)
 }
 
+func (a *Transport) InitCommunityFilters(pks []*ecdsa.PrivateKey) ([]*transport.Filter, error) {
+	return a.filters.InitCommunityFilters(pks)
+}
+
 func (a *Transport) Filters() []*transport.Filter {
 	return a.filters.Filters()
 }
 
 func (a *Transport) LoadFilters(filters []*transport.Filter) ([]*transport.Filter, error) {
 	return a.filters.InitWithFilters(filters)
+}
+
+func (a *Transport) SendCommunityMessage(ctx context.Context, newMessage *types.NewMessage, publicKey *ecdsa.PublicKey) ([]byte, error) {
+	if err := a.addSig(newMessage); err != nil {
+		return nil, err
+	}
+
+	// We load the filter to make sure we can post on it
+	filter, err := a.filters.LoadPublic(transport.PubkeyToHex(publicKey))
+	if err != nil {
+		return nil, err
+	}
+
+	newMessage.Topic = filter.Topic
+	newMessage.PublicKey = crypto.FromECDSAPub(publicKey)
+
+	return a.shhAPI.Post(ctx, *newMessage)
 }
 
 func (a *Transport) RemoveFilters(filters []*transport.Filter) error {

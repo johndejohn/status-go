@@ -396,6 +396,22 @@ func (m *MessageHandler) HandleCommunityInvitation(state *ReceivedMessageState, 
 	return nil
 }
 
+// HandleCommunityRequestToJoin handles an community request to join
+func (m *MessageHandler) HandleCommunityRequestToJoin(state *ReceivedMessageState, signer *ecdsa.PublicKey, requestToJoinProto protobuf.CommunityRequestToJoin) error {
+	if requestToJoinProto.CommunityId == nil {
+		return errors.New("invalid community id")
+	}
+
+	requestToJoin, err := m.communitiesManager.HandleCommunityRequestToJoin(signer, &requestToJoinProto)
+	if err != nil {
+		return err
+	}
+
+	state.Response.RequestsToJoinCommunity = append(state.Response.RequestsToJoinCommunity, requestToJoin)
+
+	return nil
+}
+
 // HandleWrappedCommunityDescriptionMessage handles a wrapped community description
 func (m *MessageHandler) HandleWrappedCommunityDescriptionMessage(payload []byte) (*communities.Community, error) {
 	return m.communitiesManager.HandleWrappedCommunityDescriptionMessage(payload)

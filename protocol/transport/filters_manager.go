@@ -135,6 +135,36 @@ func (s *FiltersManager) InitPublicFilters(chatIDs []string) ([]*Filter, error) 
 	return filters, nil
 }
 
+func (s *FiltersManager) InitCommunityFilters(pks []*ecdsa.PrivateKey) ([]*Filter, error) {
+	var filters []*Filter
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	for _, pk := range pks {
+
+		identityStr := PublicKeyToStr(&pk.PublicKey)
+		rawFilter, err := s.addAsymmetric(identityStr, pk, true)
+		if err != nil {
+			return nil, err
+
+		}
+		filterID := identityStr + "-admin"
+		filter := &Filter{
+			ChatID:   filterID,
+			FilterID: rawFilter.FilterID,
+			Topic:    rawFilter.Topic,
+			Identity: identityStr,
+			Listen:   true,
+			OneToOne: true,
+		}
+
+		s.filters[filterID] = filter
+
+		filters = append(filters, filter)
+	}
+	return filters, nil
+}
+
 // DEPRECATED
 func (s *FiltersManager) InitWithFilters(filters []*Filter) ([]*Filter, error) {
 	var (
@@ -496,6 +526,8 @@ func (s *FiltersManager) addSymmetric(chatID string) (*RawFilter, error) {
 	topic := ToTopic(chatID)
 	topics := [][]byte{topic}
 
+	s.logger.Debug("initating sym topic", zap.Binary("topic", topic[:]), zap.String("chat-id", chatID))
+
 	symKey, ok := s.keys[chatID]
 	if ok {
 		symKeyID, err = s.service.AddSymKeyDirect(symKey)
@@ -548,6 +580,7 @@ func (s *FiltersManager) addAsymmetric(chatID string, identity *ecdsa.PrivateKey
 
 	topic := ToTopic(chatID)
 	topics := [][]byte{topic}
+	s.logger.Debug("initating asym topic", zap.Binary("topic", topic[:]), zap.String("chat-id", chatID))
 
 	privateKeyID, err := s.service.AddKeyPair(identity)
 	if err != nil {

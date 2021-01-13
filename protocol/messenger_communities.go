@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/status-im/status-go/eth-node/crypto"
+	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/protocol/common"
 	"github.com/status-im/status-go/protocol/communities"
 	"github.com/status-im/status-go/protocol/protobuf"
@@ -128,7 +129,7 @@ func (m *Messenger) JoinedCommunities() ([]*communities.Community, error) {
 	return m.communitiesManager.Joined()
 }
 
-func (m *Messenger) JoinCommunity(communityID string) (*MessengerResponse, error) {
+func (m *Messenger) JoinCommunity(communityID types.HexBytes) (*MessengerResponse, error) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
@@ -161,7 +162,59 @@ func (m *Messenger) JoinCommunity(communityID string) (*MessengerResponse, error
 	return response, m.saveChats(response.Chats)
 }
 
-func (m *Messenger) LeaveCommunity(communityID string) (*MessengerResponse, error) {
+func (m *Messenger) RequestToJoinCommunity(request *requests.RequestToJoinCommunity) (*MessengerResponse, error) {
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+	community, err := m.communitiesManager.GetByID(request.CommunityID)
+	if err != nil {
+		return nil, err
+	}
+
+	community, requestToJoin, err := m.communitiesManager.RequestToJoin(&m.identity.PublicKey, request)
+	if err != nil {
+		return nil, err
+	}
+
+	requestToJoinProto := &protobuf.CommunityRequestToJoin{
+		Clock:       requestToJoin.Clock,
+		EnsName:     requestToJoin.ENSName,
+		CommunityId: community.ID(),
+	}
+
+	payload, err := proto.Marshal(requestToJoinProto)
+	if err != nil {
+		return nil, err
+	}
+
+	rawMessage := common.RawMessage{
+		Payload:        payload,
+		SkipEncryption: true,
+		MessageType:    protobuf.ApplicationMetadataMessage_COMMUNITY_REQUEST_TO_JOIN,
+	}
+	_, err = m.processor.SendCommunityMessage(context.Background(), community.PublicKey(), rawMessage)
+	if err != nil {
+		return nil, err
+	}
+
+	return &MessengerResponse{RequestsToJoinCommunity: []*communities.RequestToJoin{requestToJoin}}, nil
+}
+
+func (m *Messenger) AcceptRequestToJoinCommunity(request *requests.AcceptRequestToJoinCommunity) (*MessengerResponse, error) {
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+
+	community, err := m.communitiesManager.AcceptRequestToJoin(request)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &MessengerResponse{Communities: []*communities.Community{community}}, nil
+}
+
+func (m *Messenger) LeaveCommunity(communityID types.HexBytes) (*MessengerResponse, error) {
 	response := &MessengerResponse{}
 
 	org, err := m.communitiesManager.LeaveCommunity(communityID)
@@ -171,7 +224,7 @@ func (m *Messenger) LeaveCommunity(communityID string) (*MessengerResponse, erro
 
 	// Make chat inactive
 	for chatID := range org.Chats() {
-		orgChatID := communityID + chatID
+		orgChatID := communityID.String() + chatID
 		err := m.DeleteChat(orgChatID)
 		if err != nil {
 			return nil, err
@@ -188,7 +241,7 @@ func (m *Messenger) LeaveCommunity(communityID string) (*MessengerResponse, erro
 		}
 	}
 
-	filter, err := m.transport.RemoveFilterByChatID(communityID)
+	filter, err := m.transport.RemoveFilterByChatID(communityID.String())
 	if err != nil {
 		return nil, err
 	}
@@ -201,8 +254,8 @@ func (m *Messenger) LeaveCommunity(communityID string) (*MessengerResponse, erro
 	return response, nil
 }
 
-func (m *Messenger) CreateCommunityChat(orgID string, c *protobuf.CommunityChat) (*MessengerResponse, error) {
-	org, changes, err := m.communitiesManager.CreateChat(orgID, c)
+func (m *Messenger) CreateCommunityChat(communityID types.HexBytes, c *protobuf.CommunityChat) (*MessengerResponse, error) {
+	org, changes, err := m.communitiesManager.CreateChat(communityID, c)
 	if err != nil {
 		return nil, err
 	}
@@ -246,12 +299,20 @@ func (m *Messenger) CreateCommunity(request *requests.CreateCommunity) (*Messeng
 		return nil, err
 	}
 
+	m.logger.Info("Creating community loading filters")
+	// Init the community filter so we can receive messages on the community
+	filters, err := m.transport.InitCommunityFilters([]*ecdsa.PrivateKey{org.PrivateKey()})
+	if err != nil {
+		return nil, err
+	}
+
 	return &MessengerResponse{
+		Filters:     filters,
 		Communities: []*communities.Community{org},
 	}, nil
 }
 
-func (m *Messenger) ExportCommunity(id string) (*ecdsa.PrivateKey, error) {
+func (m *Messenger) ExportCommunity(id types.HexBytes) (*ecdsa.PrivateKey, error) {
 	return m.communitiesManager.ExportCommunity(id)
 }
 
@@ -272,13 +333,13 @@ func (m *Messenger) ImportCommunity(key *ecdsa.PrivateKey) (*MessengerResponse, 
 	}, nil
 }
 
-func (m *Messenger) InviteUserToCommunity(orgID, pkString string) (*MessengerResponse, error) {
+func (m *Messenger) InviteUserToCommunity(communityID types.HexBytes, pkString string) (*MessengerResponse, error) {
 	publicKey, err := common.HexToPubkey(pkString)
 	if err != nil {
 		return nil, err
 	}
 
-	org, err := m.communitiesManager.InviteUserToCommunity(orgID, publicKey)
+	org, err := m.communitiesManager.InviteUserToCommunity(communityID, publicKey)
 	if err != nil {
 		return nil, err
 	}
@@ -288,13 +349,21 @@ func (m *Messenger) InviteUserToCommunity(orgID, pkString string) (*MessengerRes
 	}, nil
 }
 
-func (m *Messenger) RemoveUserFromCommunity(orgID, pkString string) (*MessengerResponse, error) {
+func (m *Messenger) MyPendingRequestsToJoin() ([]*communities.RequestToJoin, error) {
+	return m.communitiesManager.PendingRequestsToJoinForUser(&m.identity.PublicKey)
+}
+
+func (m *Messenger) PendingRequestsToJoinForCommunity(id types.HexBytes) ([]*communities.RequestToJoin, error) {
+	return m.communitiesManager.PendingRequestsToJoinForCommunity(id)
+}
+
+func (m *Messenger) RemoveUserFromCommunity(id types.HexBytes, pkString string) (*MessengerResponse, error) {
 	publicKey, err := common.HexToPubkey(pkString)
 	if err != nil {
 		return nil, err
 	}
 
-	org, err := m.communitiesManager.RemoveUserFromCommunity(orgID, publicKey)
+	org, err := m.communitiesManager.RemoveUserFromCommunity(id, publicKey)
 	if err != nil {
 		return nil, err
 	}
