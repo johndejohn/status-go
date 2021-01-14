@@ -32,6 +32,7 @@ import (
 	"github.com/status-im/status-go/protocol/transport"
 	"github.com/status-im/status-go/services/ext/mailservers"
 	localnotifications "github.com/status-im/status-go/services/local-notifications"
+	mailserversDB "github.com/status-im/status-go/services/mailservers"
 	"github.com/status-im/status-go/services/wallet"
 	"github.com/status-im/status-go/signal"
 
@@ -470,6 +471,7 @@ func buildMessengerOptions(
 		protocol.WithPushNotifications(),
 		protocol.WithDatabase(db),
 		protocol.WithMultiAccounts(multiAccounts),
+		protocol.WithMailserversDatabase(mailserversDB.NewDB(db)),
 		protocol.WithAccount(account),
 		protocol.WithEnvelopesMonitorConfig(envelopesMonitorConfig),
 		protocol.WithOnNegotiatedFilters(onNegotiatedFilters),

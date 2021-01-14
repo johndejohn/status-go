@@ -56,6 +56,29 @@ func TestAddGetDeleteMailserver(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestTopic(t *testing.T) {
+	db, close := setupTestDB(t)
+	defer close()
+	topic1 := MailserverTopic{Topic: "a"}
+	topic2 := MailserverTopic{Topic: "b"}
+	topic3 := MailserverTopic{Topic: "c"}
+
+	require.NoError(t, db.AddTopic(topic1))
+	require.NoError(t, db.AddTopic(topic2))
+	require.NoError(t, db.AddTopic(topic3))
+
+	topics, err := db.Topics()
+	require.NoError(t, err)
+	require.Len(t, topics, 3)
+
+	require.NoError(t, db.DeleteAllTopicsExcept([]string{"a"}))
+
+	topics, err = db.Topics()
+	require.NoError(t, err)
+	require.Len(t, topics, 1)
+
+}
+
 func TestAddGetDeleteMailserverRequestGap(t *testing.T) {
 	db, close := setupTestDB(t)
 	defer close()

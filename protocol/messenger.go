@@ -43,6 +43,7 @@ import (
 	wakutransp "github.com/status-im/status-go/protocol/transport/waku"
 	shhtransp "github.com/status-im/status-go/protocol/transport/whisper"
 	v1protocol "github.com/status-im/status-go/protocol/v1"
+	"github.com/status-im/status-go/services/mailservers"
 )
 
 type chatContext string
@@ -98,6 +99,7 @@ type Messenger struct {
 	database                   *sql.DB
 	multiAccounts              *multiaccounts.Database
 	account                    *multiaccounts.Account
+	mailserversDatabase        *mailservers.Database
 	quit                       chan struct{}
 
 	mutex sync.Mutex
@@ -298,6 +300,7 @@ func NewMessenger(
 		verifyTransactionClient:    c.verifyTransactionClient,
 		database:                   database,
 		multiAccounts:              c.multiAccount,
+		mailserversDatabase:        c.mailserversDatabase,
 		account:                    c.account,
 		quit:                       make(chan struct{}),
 		shutdownTasks: []func() error{
@@ -430,7 +433,22 @@ func (m *Messenger) Start() error {
 	m.watchConnectionChange()
 	m.watchExpiredEmojis()
 	m.watchIdentityImageChanges()
+	if err := m.cleanTopics(); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (m *Messenger) cleanTopics() error {
+	if m.mailserversDatabase == nil {
+		return nil
+	}
+	var topics []string
+	for _, f := range m.transport.Filters() {
+		topics = append(topics, f.Topic.String())
+	}
+
+	return m.mailserversDatabase.DeleteAllTopicsExcept(topics)
 }
 
 // handle connection change is called each time we go from offline/online or viceversa

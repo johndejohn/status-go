@@ -262,6 +262,22 @@ func (d *Database) DeleteTopic(topic string) error {
 	return err
 }
 
+func (d *Database) DeleteAllTopicsExcept(topics []string) error {
+	if len(topics) == 0 {
+		return nil
+	}
+	topicsArgs := make([]interface{}, 0, len(topics))
+	for _, topic := range topics {
+		topicsArgs = append(topicsArgs, topic)
+	}
+
+	inVector := strings.Repeat("?, ", len(topics)-1) + "?"
+
+	query := "DELETE FROM mailserver_topics WHERE topic NOT IN (" + inVector + ")" // nolint: gosec
+	_, err := d.db.Exec(query, topicsArgs...)
+	return err
+}
+
 func (d *Database) AddChatRequestRange(req ChatRequestRange) error {
 	_, err := d.db.Exec(`INSERT OR REPLACE INTO mailserver_chat_request_ranges(
 			chat_id,
