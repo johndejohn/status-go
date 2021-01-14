@@ -904,6 +904,18 @@ func (whisper *Whisper) Unsubscribe(id string) error {
 	return nil
 }
 
+// UnsubscribeMany removes an installed message handler.
+func (whisper *Whisper) UnsubscribeMany(ids []string) error {
+	for _, id := range ids {
+		ok := whisper.filters.Uninstall(id)
+		if !ok {
+			return fmt.Errorf("Unsubscribe: Invalid ID")
+		}
+	}
+	return nil
+
+}
+
 // Send injects a message into the whisper send queue, to be distributed in the
 // network in the coming cycles.
 func (whisper *Whisper) Send(envelope *Envelope) error {
