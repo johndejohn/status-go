@@ -11,6 +11,7 @@ import (
 
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
+	"github.com/status-im/status-go/images"
 	"github.com/status-im/status-go/protocol/common"
 	"github.com/status-im/status-go/protocol/protobuf"
 	"github.com/status-im/status-go/protocol/v1"
@@ -49,17 +50,38 @@ func New(config Config) (*Community, error) {
 
 func (o *Community) MarshalJSON() ([]byte, error) {
 	item := struct {
-		*protobuf.CommunityDescription `json:"description"`
-		ID                             string `json:"id"`
-		Admin                          bool   `json:"admin"`
-		Verified                       bool   `json:"verified"`
-		Joined                         bool   `json:"joined"`
+		ID          string                               `json:"id"`
+		Admin       bool                                 `json:"admin"`
+		Verified    bool                                 `json:"verified"`
+		Joined      bool                                 `json:"joined"`
+		Name        string                               `json:"name"`
+		Description string                               `json:"description"`
+		Chats       map[string]*protobuf.CommunityChat   `json:"chats"`
+		Images      map[string]images.IdentityImage      `json:"images"`
+		Permissions *protobuf.CommunityPermissions       `json:"permissions"`
+		Members     map[string]*protobuf.CommunityMember `json:"members"`
 	}{
-		ID:                   o.IDString(),
-		CommunityDescription: o.config.CommunityDescription,
-		Admin:                o.IsAdmin(),
-		Verified:             o.config.Verified,
-		Joined:               o.config.Joined,
+		ID:       o.IDString(),
+		Admin:    o.IsAdmin(),
+		Verified: o.config.Verified,
+		Joined:   o.config.Joined,
+	}
+	if o.config.CommunityDescription != nil {
+		item.Chats = o.config.CommunityDescription.Chats
+		item.Members = o.config.CommunityDescription.Members
+		item.Permissions = o.config.CommunityDescription.Permissions
+		if o.config.CommunityDescription.Identity != nil {
+			item.Name = o.config.CommunityDescription.Identity.DisplayName
+			item.Description = o.config.CommunityDescription.Identity.Description
+			for t, i := range o.config.CommunityDescription.Identity.Images {
+				if item.Images == nil {
+					item.Images = make(map[string]images.IdentityImage)
+				}
+				item.Images[t] = images.IdentityImage{Name: t, Payload: i.Payload}
+
+			}
+		}
+
 	}
 	return json.Marshal(item)
 }

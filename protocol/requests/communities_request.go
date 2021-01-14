@@ -21,6 +21,10 @@ type CreateCommunity struct {
 	Membership  protobuf.CommunityPermissions_Access
 	EnsOnly     bool   `json:"ensOnly"`
 	Image       string `json:"image"`
+	ImageAx     int    `json:"imageAx"`
+	ImageAy     int    `json:"imageAy"`
+	ImageBx     int    `json:"imageBx"`
+	ImageBy     int    `json:"imageBy"`
 }
 
 func adaptIdentityImageToProtobuf(img *userimages.IdentityImage) *protobuf.IdentityImage {
@@ -56,7 +60,7 @@ func (c *CreateCommunity) ToCommunityDescription() (*protobuf.CommunityDescripti
 	if c.Image != "" {
 		log.Info("has-image", "image", c.Image)
 		ciis := make(map[string]*protobuf.IdentityImage)
-		imgs, err := userimages.GenerateIdentityImages(c.Image, 0, 0, 0, 0)
+		imgs, err := userimages.GenerateIdentityImages(c.Image, c.ImageAx, c.ImageAy, c.ImageBx, c.ImageBy)
 		if err != nil {
 			return nil, err
 		}
