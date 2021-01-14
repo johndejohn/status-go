@@ -2345,6 +2345,11 @@ func (m *Messenger) SendChatMessages(ctx context.Context, messages []*common.Mes
 
 // SendChatMessage takes a minimal message and sends it based on the corresponding chat
 func (m *Messenger) sendChatMessage(ctx context.Context, message *common.Message) (*MessengerResponse, error) {
+	filters := m.transport.Filters()
+	for _, f := range filters {
+		m.logger.Info("Filter", zap.String("chat-id", f.ChatID), zap.Bool("Negotiated", f.Negotiated), zap.Bool("listen", f.Listen), zap.Bool("discovery", f.Discovery), zap.Bool("one-to-on", f.OneToOne), zap.String("topic", f.Topic.String()), zap.Any("filter", f))
+	}
+
 	if len(message.ImagePath) != 0 {
 		file, err := os.Open(message.ImagePath)
 		if err != nil {
