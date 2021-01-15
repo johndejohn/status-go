@@ -2284,8 +2284,10 @@ func (m *Messenger) dispatchMessage(ctx context.Context, spec common.RawMessage)
 	case ChatTypePrivateGroupChat:
 		logger.Debug("sending group message", zap.String("chatName", chat.Name))
 		if spec.Recipients == nil {
-			// Chat messages are only dispatched to users who joined
-			if spec.MessageType == protobuf.ApplicationMetadataMessage_CHAT_MESSAGE {
+			// Anything that is not a membership update message is only dispatched to joined users
+			// NOTE: I think here it might make sense to always invite to joined users apart from the
+			// initial message
+			if spec.MessageType != protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE {
 				spec.Recipients, err = chat.JoinedMembersAsPublicKeys()
 				if err != nil {
 					return nil, err
@@ -2298,6 +2300,19 @@ func (m *Messenger) dispatchMessage(ctx context.Context, spec common.RawMessage)
 				}
 			}
 		}
+
+		joinedMembers, err := chat.JoinedMembersAsPublicKeys()
+		if err != nil {
+			return nil, err
+		}
+		allMembers, err := chat.MembersAsPublicKeys()
+		if err != nil {
+			return nil, err
+		}
+
+		logger.Debug("Recipients", zap.Any("members", allMembers))
+		logger.Debug("Joined", zap.Any("members", joinedMembers))
+
 		hasPairedDevices := m.hasPairedDevices()
 
 		if !hasPairedDevices {
