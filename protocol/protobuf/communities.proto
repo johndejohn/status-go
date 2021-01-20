@@ -12,6 +12,12 @@ message Grant {
 }
 
 message CommunityMember {
+  enum Roles {
+    UNKNOWN_ROLE = 0;
+    ROLE_ALL = 1;
+    ROLE_MANAGE_USERS = 2;
+  }
+  repeated Roles roles = 1;
 }
 
 message CommunityPermissions {

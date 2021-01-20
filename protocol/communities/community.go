@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"encoding/json"
+	"errors"
 	"sync"
 
 	"github.com/golang/protobuf/proto"
@@ -25,8 +26,10 @@ type Config struct {
 	MarshaledCommunityDescription []byte
 	ID                            *ecdsa.PublicKey
 	Joined                        bool
+	RequestToJoin                 *RequestToJoin
 	Verified                      bool
 	Logger                        *zap.Logger
+	MemberIdentity                *ecdsa.PublicKey
 }
 
 type Community struct {
@@ -35,6 +38,10 @@ type Community struct {
 }
 
 func New(config Config) (*Community, error) {
+	if config.MemberIdentity == nil {
+		return nil, errors.New("no member identity")
+	}
+
 	if config.Logger == nil {
 		logger, err := zap.NewDevelopment()
 		if err != nil {
@@ -49,22 +56,32 @@ func New(config Config) (*Community, error) {
 }
 
 func (o *Community) MarshalJSON() ([]byte, error) {
+	if o.config.MemberIdentity == nil {
+		return nil, errors.New("member identity not set")
+	}
 	item := struct {
-		ID          string                               `json:"id"`
-		Admin       bool                                 `json:"admin"`
-		Verified    bool                                 `json:"verified"`
-		Joined      bool                                 `json:"joined"`
-		Name        string                               `json:"name"`
-		Description string                               `json:"description"`
-		Chats       map[string]*protobuf.CommunityChat   `json:"chats"`
-		Images      map[string]images.IdentityImage      `json:"images"`
-		Permissions *protobuf.CommunityPermissions       `json:"permissions"`
-		Members     map[string]*protobuf.CommunityMember `json:"members"`
+		ID                string                               `json:"id"`
+		Admin             bool                                 `json:"admin"`
+		Verified          bool                                 `json:"verified"`
+		Joined            bool                                 `json:"joined"`
+		RequestedAccessAt int                                  `json:"requestedAccessAt"`
+		Name              string                               `json:"name"`
+		Description       string                               `json:"description"`
+		Chats             map[string]*protobuf.CommunityChat   `json:"chats"`
+		Images            map[string]images.IdentityImage      `json:"images"`
+		Permissions       *protobuf.CommunityPermissions       `json:"permissions"`
+		Members           map[string]*protobuf.CommunityMember `json:"members"`
+		CanRequestAccess  bool                                 `json:"canRequestAccess"`
+		CanManageUsers    bool                                 `json:"canManageUsers"`
+		IsMember          bool                                 `json:"isMember"`
 	}{
-		ID:       o.IDString(),
-		Admin:    o.IsAdmin(),
-		Verified: o.config.Verified,
-		Joined:   o.config.Joined,
+		ID:               o.IDString(),
+		Admin:            o.IsAdmin(),
+		Verified:         o.config.Verified,
+		Joined:           o.config.Joined,
+		CanRequestAccess: o.CanRequestAccess(o.config.MemberIdentity),
+		CanManageUsers:   o.CanManageUsers(o.config.MemberIdentity),
+		IsMember:         o.hasMember(o.config.MemberIdentity),
 	}
 	if o.config.CommunityDescription != nil {
 		item.Chats = o.config.CommunityDescription.Chats
@@ -243,11 +260,32 @@ func (o *Community) InviteUserToChat(pk *ecdsa.PublicKey, chatID string) (*proto
 	return response, nil
 }
 
-func (o *Community) hasMember(pk *ecdsa.PublicKey) bool {
+func (o *Community) getMember(pk *ecdsa.PublicKey) *protobuf.CommunityMember {
 
 	key := common.PubkeyToHex(pk)
-	_, ok := o.config.CommunityDescription.Members[key]
-	return ok
+	member := o.config.CommunityDescription.Members[key]
+	return member
+}
+
+func (o *Community) hasMember(pk *ecdsa.PublicKey) bool {
+
+	member := o.getMember(pk)
+	return member != nil
+}
+
+func (o *Community) hasPermission(pk *ecdsa.PublicKey, role protobuf.CommunityMember_Roles) bool {
+	member := o.getMember(pk)
+	if member == nil {
+		return false
+	}
+
+	for _, r := range member.Roles {
+		if r == role {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (o *Community) HasMember(pk *ecdsa.PublicKey) bool {
@@ -730,6 +768,38 @@ func (o *Community) increaseClock() {
 
 func (o *Community) Clock() uint64 {
 	return o.config.CommunityDescription.Clock
+}
+
+func (o *Community) CanRequestAccess(pk *ecdsa.PublicKey) bool {
+	if o.hasMember(pk) {
+		return false
+	}
+
+	if o.config.CommunityDescription == nil {
+		return false
+	}
+
+	if o.config.CommunityDescription.Permissions == nil {
+		return false
+	}
+
+	return o.config.CommunityDescription.Permissions.Access == protobuf.CommunityPermissions_ON_REQUEST
+}
+
+func (o *Community) CanManageUsers(pk *ecdsa.PublicKey) bool {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+
+	if o.IsAdmin() {
+		return true
+	}
+
+	if !o.hasMember(pk) {
+		return false
+	}
+
+	return o.hasPermission(pk, protobuf.CommunityMember_ROLE_ALL) || o.hasPermission(pk, protobuf.CommunityMember_ROLE_MANAGE_USERS)
+
 }
 
 func (o *Community) nextClock() uint64 {

@@ -326,7 +326,7 @@ func (s *CommunitySuite) TestHandleRequestToJoin() {
 		},
 		{
 			name:    "not admin",
-			config:  Config{CommunityDescription: description},
+			config:  Config{MemberIdentity: signer, CommunityDescription: description},
 			signer:  signer,
 			request: request,
 			err:     ErrNotAdmin,
@@ -716,6 +716,7 @@ func (s *CommunitySuite) configOnRequest() Config {
 	description := s.emptyCommunityDescription()
 	description.Permissions.Access = protobuf.CommunityPermissions_ON_REQUEST
 	return Config{
+		MemberIdentity:       &s.identity.PublicKey,
 		ID:                   &s.identity.PublicKey,
 		CommunityDescription: description,
 		PrivateKey:           s.identity,
@@ -726,6 +727,7 @@ func (s *CommunitySuite) configInvitationOnly() Config {
 	description := s.emptyCommunityDescription()
 	description.Permissions.Access = protobuf.CommunityPermissions_INVITATION_ONLY
 	return Config{
+		MemberIdentity:       &s.identity.PublicKey,
 		ID:                   &s.identity.PublicKey,
 		CommunityDescription: description,
 		PrivateKey:           s.identity,
@@ -737,6 +739,7 @@ func (s *CommunitySuite) configNoMembershipOrgNoMembershipChat() Config {
 	description.Permissions.Access = protobuf.CommunityPermissions_NO_MEMBERSHIP
 	description.Chats[testChatID1].Permissions.Access = protobuf.CommunityPermissions_NO_MEMBERSHIP
 	return Config{
+		MemberIdentity:       &s.identity.PublicKey,
 		ID:                   &s.identity.PublicKey,
 		CommunityDescription: description,
 		PrivateKey:           s.identity,
@@ -749,6 +752,7 @@ func (s *CommunitySuite) configNoMembershipOrgInvitationOnlyChat() Config {
 	description.Permissions.Access = protobuf.CommunityPermissions_NO_MEMBERSHIP
 	description.Chats[testChatID1].Permissions.Access = protobuf.CommunityPermissions_INVITATION_ONLY
 	return Config{
+		MemberIdentity:       &s.identity.PublicKey,
 		ID:                   &s.identity.PublicKey,
 		CommunityDescription: description,
 		PrivateKey:           s.identity,
@@ -760,6 +764,7 @@ func (s *CommunitySuite) configInvitationOnlyOrgInvitationOnlyChat() Config {
 	description.Permissions.Access = protobuf.CommunityPermissions_INVITATION_ONLY
 	description.Chats[testChatID1].Permissions.Access = protobuf.CommunityPermissions_INVITATION_ONLY
 	return Config{
+		MemberIdentity:       &s.identity.PublicKey,
 		ID:                   &s.identity.PublicKey,
 		CommunityDescription: description,
 		PrivateKey:           s.identity,
@@ -771,6 +776,7 @@ func (s *CommunitySuite) configNoMembershipOrgOnRequestChat() Config {
 	description.Permissions.Access = protobuf.CommunityPermissions_NO_MEMBERSHIP
 	description.Chats[testChatID1].Permissions.Access = protobuf.CommunityPermissions_ON_REQUEST
 	return Config{
+		MemberIdentity:       &s.identity.PublicKey,
 		ID:                   &s.identity.PublicKey,
 		CommunityDescription: description,
 		PrivateKey:           s.identity,
@@ -782,6 +788,7 @@ func (s *CommunitySuite) configOnRequestOrgOnRequestChat() Config {
 	description.Permissions.Access = protobuf.CommunityPermissions_ON_REQUEST
 	description.Chats[testChatID1].Permissions.Access = protobuf.CommunityPermissions_ON_REQUEST
 	return Config{
+		MemberIdentity:       &s.identity.PublicKey,
 		ID:                   &s.identity.PublicKey,
 		CommunityDescription: description,
 		PrivateKey:           s.identity,
@@ -793,6 +800,7 @@ func (s *CommunitySuite) configOnRequestOrgInvitationOnlyChat() Config {
 	description.Permissions.Access = protobuf.CommunityPermissions_ON_REQUEST
 	description.Chats[testChatID1].Permissions.Access = protobuf.CommunityPermissions_INVITATION_ONLY
 	return Config{
+		MemberIdentity:       &s.identity.PublicKey,
 		ID:                   &s.identity.PublicKey,
 		CommunityDescription: description,
 		PrivateKey:           s.identity,
@@ -804,6 +812,7 @@ func (s *CommunitySuite) configOnRequestOrgNoMembershipChat() Config {
 	description.Permissions.Access = protobuf.CommunityPermissions_ON_REQUEST
 	description.Chats[testChatID1].Permissions.Access = protobuf.CommunityPermissions_NO_MEMBERSHIP
 	return Config{
+		MemberIdentity:       &s.identity.PublicKey,
 		ID:                   &s.identity.PublicKey,
 		CommunityDescription: description,
 		PrivateKey:           s.identity,
@@ -816,6 +825,7 @@ func (s *CommunitySuite) configChatENSOnly() Config {
 	description.Chats[testChatID1].Permissions.Access = protobuf.CommunityPermissions_ON_REQUEST
 	description.Chats[testChatID1].Permissions.EnsOnly = true
 	return Config{
+		MemberIdentity:       &s.identity.PublicKey,
 		ID:                   &s.identity.PublicKey,
 		CommunityDescription: description,
 		PrivateKey:           s.identity,
@@ -827,6 +837,7 @@ func (s *CommunitySuite) configENSOnly() Config {
 	description.Permissions.Access = protobuf.CommunityPermissions_ON_REQUEST
 	description.Permissions.EnsOnly = true
 	return Config{
+		MemberIdentity:       &s.identity.PublicKey,
 		ID:                   &s.identity.PublicKey,
 		CommunityDescription: description,
 		PrivateKey:           s.identity,

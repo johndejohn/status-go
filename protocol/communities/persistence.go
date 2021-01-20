@@ -28,7 +28,7 @@ func (p *Persistence) SaveCommunity(community *Community) error {
 	return err
 }
 
-func (p *Persistence) queryCommunities(query string) (response []*Community, err error) {
+func (p *Persistence) queryCommunities(memberIdentity *ecdsa.PublicKey, query string) (response []*Community, err error) {
 
 	rows, err := p.db.Query(query)
 	if err != nil {
@@ -54,7 +54,7 @@ func (p *Persistence) queryCommunities(query string) (response []*Community, err
 			return nil, err
 		}
 
-		org, err := unmarshalCommunityFromDB(publicKeyBytes, privateKeyBytes, descriptionBytes, joined, verified, p.logger)
+		org, err := unmarshalCommunityFromDB(memberIdentity, publicKeyBytes, privateKeyBytes, descriptionBytes, joined, verified, p.logger)
 		if err != nil {
 			return nil, err
 		}
@@ -65,22 +65,22 @@ func (p *Persistence) queryCommunities(query string) (response []*Community, err
 
 }
 
-func (p *Persistence) AllCommunities() ([]*Community, error) {
+func (p *Persistence) AllCommunities(memberIdentity *ecdsa.PublicKey) ([]*Community, error) {
 	query := `SELECT id, private_key, description,joined,verified FROM communities_communities`
-	return p.queryCommunities(query)
+	return p.queryCommunities(memberIdentity, query)
 }
 
-func (p *Persistence) JoinedCommunities() ([]*Community, error) {
+func (p *Persistence) JoinedCommunities(memberIdentity *ecdsa.PublicKey) ([]*Community, error) {
 	query := `SELECT id, private_key, description,joined,verified FROM communities_communities WHERE joined`
-	return p.queryCommunities(query)
+	return p.queryCommunities(memberIdentity, query)
 }
 
-func (p *Persistence) CreatedCommunities() ([]*Community, error) {
+func (p *Persistence) CreatedCommunities(memberIdentity *ecdsa.PublicKey) ([]*Community, error) {
 	query := `SELECT id, private_key, description,joined,verified FROM communities_communities WHERE private_key IS NOT NULL`
-	return p.queryCommunities(query)
+	return p.queryCommunities(memberIdentity, query)
 }
 
-func (p *Persistence) GetByID(id []byte) (*Community, error) {
+func (p *Persistence) GetByID(memberIdentity *ecdsa.PublicKey, id []byte) (*Community, error) {
 	var publicKeyBytes, privateKeyBytes, descriptionBytes []byte
 	var joined bool
 	var verified bool
@@ -93,10 +93,10 @@ func (p *Persistence) GetByID(id []byte) (*Community, error) {
 		return nil, err
 	}
 
-	return unmarshalCommunityFromDB(publicKeyBytes, privateKeyBytes, descriptionBytes, joined, verified, p.logger)
+	return unmarshalCommunityFromDB(memberIdentity, publicKeyBytes, privateKeyBytes, descriptionBytes, joined, verified, p.logger)
 }
 
-func unmarshalCommunityFromDB(publicKeyBytes, privateKeyBytes, descriptionBytes []byte, joined, verified bool, logger *zap.Logger) (*Community, error) {
+func unmarshalCommunityFromDB(memberIdentity *ecdsa.PublicKey, publicKeyBytes, privateKeyBytes, descriptionBytes []byte, joined, verified bool, logger *zap.Logger) (*Community, error) {
 
 	var privateKey *ecdsa.PrivateKey
 	var err error
@@ -129,6 +129,7 @@ func unmarshalCommunityFromDB(publicKeyBytes, privateKeyBytes, descriptionBytes 
 	config := Config{
 		PrivateKey:                    privateKey,
 		CommunityDescription:          description,
+		MemberIdentity:                memberIdentity,
 		MarshaledCommunityDescription: descriptionBytes,
 		Logger:                        logger,
 		ID:                            id,

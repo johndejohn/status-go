@@ -394,6 +394,11 @@ func (api *PublicAPI) AcceptRequestToJoinCommunity(request *requests.AcceptReque
 	return api.service.messenger.AcceptRequestToJoinCommunity(request)
 }
 
+// RequestToJoinCommunity requests to join a particular community
+func (api *PublicAPI) RequestToJoinCommunity(request *requests.RequestToJoinCommunity) (*protocol.MessengerResponse, error) {
+	return api.service.messenger.RequestToJoinCommunity(request)
+}
+
 type ApplicationMessagesResponse struct {
 	Messages []*common.Message `json:"messages"`
 	Cursor   string            `json:"cursor"`

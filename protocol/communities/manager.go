@@ -116,15 +116,15 @@ func (m *Manager) publish(subscription *Subscription) {
 }
 
 func (m *Manager) All() ([]*Community, error) {
-	return m.persistence.AllCommunities()
+	return m.persistence.AllCommunities(m.identity)
 }
 
 func (m *Manager) Joined() ([]*Community, error) {
-	return m.persistence.JoinedCommunities()
+	return m.persistence.JoinedCommunities(m.identity)
 }
 
 func (m *Manager) Created() ([]*Community, error) {
-	return m.persistence.CreatedCommunities()
+	return m.persistence.CreatedCommunities(m.identity)
 }
 
 // CreateCommunity takes a description, generates an ID for it, saves it and return it
@@ -146,6 +146,7 @@ func (m *Manager) CreateCommunity(description *protobuf.CommunityDescription) (*
 		PrivateKey:           key,
 		Logger:               m.logger,
 		Joined:               true,
+		MemberIdentity:       m.identity,
 		CommunityDescription: description,
 	}
 	community, err := New(config)
@@ -179,7 +180,7 @@ func (m *Manager) ExportCommunity(id types.HexBytes) (*ecdsa.PrivateKey, error) 
 func (m *Manager) ImportCommunity(key *ecdsa.PrivateKey) (*Community, error) {
 	communityID := crypto.CompressPubkey(&key.PublicKey)
 
-	community, err := m.persistence.GetByID(communityID)
+	community, err := m.persistence.GetByID(m.identity, communityID)
 	if err != nil {
 		return nil, err
 	}
@@ -194,6 +195,7 @@ func (m *Manager) ImportCommunity(key *ecdsa.PrivateKey) (*Community, error) {
 			PrivateKey:           key,
 			Logger:               m.logger,
 			Joined:               true,
+			MemberIdentity:       m.identity,
 			CommunityDescription: description,
 		}
 		community, err = New(config)
@@ -239,7 +241,7 @@ func (m *Manager) CreateChat(communityID types.HexBytes, chat *protobuf.Communit
 
 func (m *Manager) HandleCommunityDescriptionMessage(signer *ecdsa.PublicKey, description *protobuf.CommunityDescription, payload []byte) (*Community, error) {
 	id := crypto.CompressPubkey(signer)
-	community, err := m.persistence.GetByID(id)
+	community, err := m.persistence.GetByID(m.identity, id)
 	if err != nil {
 		return nil, err
 	}
@@ -249,6 +251,7 @@ func (m *Manager) HandleCommunityDescriptionMessage(signer *ecdsa.PublicKey, des
 			CommunityDescription:          description,
 			Logger:                        m.logger,
 			MarshaledCommunityDescription: payload,
+			MemberIdentity:                m.identity,
 			ID:                            signer,
 		}
 
@@ -322,7 +325,7 @@ func (m *Manager) AcceptRequestToJoin(request *requests.AcceptRequestToJoinCommu
 }
 
 func (m *Manager) HandleCommunityRequestToJoin(signer *ecdsa.PublicKey, request *protobuf.CommunityRequestToJoin) (*RequestToJoin, error) {
-	community, err := m.persistence.GetByID(request.CommunityId)
+	community, err := m.persistence.GetByID(m.identity, request.CommunityId)
 	if err != nil {
 		return nil, err
 	}
@@ -467,7 +470,7 @@ func (m *Manager) RemoveUserFromCommunity(id types.HexBytes, pk *ecdsa.PublicKey
 }
 
 func (m *Manager) GetByID(id []byte) (*Community, error) {
-	return m.persistence.GetByID(id)
+	return m.persistence.GetByID(m.identity, id)
 }
 
 func (m *Manager) GetByIDString(idString string) (*Community, error) {
@@ -479,7 +482,7 @@ func (m *Manager) GetByIDString(idString string) (*Community, error) {
 }
 
 func (m *Manager) RequestToJoin(requester *ecdsa.PublicKey, request *requests.RequestToJoinCommunity) (*Community, *RequestToJoin, error) {
-	community, err := m.persistence.GetByID(request.CommunityID)
+	community, err := m.persistence.GetByID(m.identity, request.CommunityID)
 	if err != nil {
 		return nil, nil, err
 	}
