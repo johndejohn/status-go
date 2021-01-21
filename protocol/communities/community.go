@@ -81,6 +81,7 @@ func (o *Community) MarshalJSON() ([]byte, error) {
 		Members           map[string]*protobuf.CommunityMember `json:"members"`
 		CanRequestAccess  bool                                 `json:"canRequestAccess"`
 		CanManageUsers    bool                                 `json:"canManageUsers"`
+		CanJoin           bool                                 `json:"canJoin"`
 		RequestedToJoinAt uint64                               `json:"requestedToJoinAt,omitempty"`
 		IsMember          bool                                 `json:"isMember"`
 	}{
@@ -90,9 +91,10 @@ func (o *Community) MarshalJSON() ([]byte, error) {
 		Chats:             make(map[string]CommunityChat),
 		Joined:            o.config.Joined,
 		CanRequestAccess:  o.CanRequestAccess(o.config.MemberIdentity),
+		CanJoin:           o.canJoin(),
 		CanManageUsers:    o.CanManageUsers(o.config.MemberIdentity),
 		RequestedToJoinAt: o.RequestedToJoinAt(),
-		IsMember:          o.hasMember(o.config.MemberIdentity),
+		IsMember:          o.isMember(),
 	}
 	if o.config.CommunityDescription != nil {
 		for id, c := range o.config.CommunityDescription.Chats {
@@ -824,6 +826,26 @@ func (o *Community) CanManageUsers(pk *ecdsa.PublicKey) bool {
 
 	return o.hasPermission(pk, protobuf.CommunityMember_ROLE_ALL) || o.hasPermission(pk, protobuf.CommunityMember_ROLE_MANAGE_USERS)
 
+}
+func (o *Community) isMember() bool {
+	return o.hasMember(o.config.MemberIdentity)
+}
+
+// CanJoin returns whether a user can join the community, only if it's
+func (o *Community) canJoin() bool {
+	if o.config.Joined {
+		return false
+	}
+
+	if o.IsAdmin() {
+		return true
+	}
+
+	if o.config.CommunityDescription.Permissions.Access == protobuf.CommunityPermissions_NO_MEMBERSHIP {
+		return true
+	}
+
+	return o.isMember()
 }
 
 func (o *Community) RequestedToJoinAt() uint64 {
