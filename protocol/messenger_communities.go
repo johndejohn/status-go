@@ -197,7 +197,7 @@ func (m *Messenger) RequestToJoinCommunity(request *requests.RequestToJoinCommun
 		return nil, err
 	}
 
-	return &MessengerResponse{RequestsToJoinCommunity: []*communities.RequestToJoin{requestToJoin}}, nil
+	return &MessengerResponse{Communities: []*communities.Community{community}, RequestsToJoinCommunity: []*communities.RequestToJoin{requestToJoin}}, nil
 }
 
 func (m *Messenger) AcceptRequestToJoinCommunity(request *requests.AcceptRequestToJoinCommunity) (*MessengerResponse, error) {

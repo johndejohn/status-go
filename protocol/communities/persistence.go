@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/status-im/status-go/eth-node/crypto"
+	"github.com/status-im/status-go/protocol/common"
 	"github.com/status-im/status-go/protocol/protobuf"
 )
 
@@ -15,6 +16,8 @@ type Persistence struct {
 	db     *sql.DB
 	logger *zap.Logger
 }
+
+const communitiesBaseQuery = `SELECT c.id, c.private_key, c.description,c.joined,c.verified,r.clock FROM communities_communities c LEFT JOIN communities_requests_to_join r ON c.id = r.community_id AND r.public_key = ?`
 
 func (p *Persistence) SaveCommunity(community *Community) error {
 	id := community.ID()
@@ -30,7 +33,7 @@ func (p *Persistence) SaveCommunity(community *Community) error {
 
 func (p *Persistence) queryCommunities(memberIdentity *ecdsa.PublicKey, query string) (response []*Community, err error) {
 
-	rows, err := p.db.Query(query)
+	rows, err := p.db.Query(query, common.PubkeyToHex(memberIdentity))
 	if err != nil {
 		return nil, err
 	}
@@ -49,12 +52,13 @@ func (p *Persistence) queryCommunities(memberIdentity *ecdsa.PublicKey, query st
 		var publicKeyBytes, privateKeyBytes, descriptionBytes []byte
 		var joined bool
 		var verified bool
-		err := rows.Scan(&publicKeyBytes, &privateKeyBytes, &descriptionBytes, &joined, &verified)
+		var requestedToJoinAt sql.NullInt64
+		err := rows.Scan(&publicKeyBytes, &privateKeyBytes, &descriptionBytes, &joined, &verified, &requestedToJoinAt)
 		if err != nil {
 			return nil, err
 		}
 
-		org, err := unmarshalCommunityFromDB(memberIdentity, publicKeyBytes, privateKeyBytes, descriptionBytes, joined, verified, p.logger)
+		org, err := unmarshalCommunityFromDB(memberIdentity, publicKeyBytes, privateKeyBytes, descriptionBytes, joined, verified, uint64(requestedToJoinAt.Int64), p.logger)
 		if err != nil {
 			return nil, err
 		}
@@ -66,17 +70,16 @@ func (p *Persistence) queryCommunities(memberIdentity *ecdsa.PublicKey, query st
 }
 
 func (p *Persistence) AllCommunities(memberIdentity *ecdsa.PublicKey) ([]*Community, error) {
-	query := `SELECT id, private_key, description,joined,verified FROM communities_communities`
-	return p.queryCommunities(memberIdentity, query)
+	return p.queryCommunities(memberIdentity, communitiesBaseQuery)
 }
 
 func (p *Persistence) JoinedCommunities(memberIdentity *ecdsa.PublicKey) ([]*Community, error) {
-	query := `SELECT id, private_key, description,joined,verified FROM communities_communities WHERE joined`
+	query := communitiesBaseQuery + ` WHERE c.joined`
 	return p.queryCommunities(memberIdentity, query)
 }
 
 func (p *Persistence) CreatedCommunities(memberIdentity *ecdsa.PublicKey) ([]*Community, error) {
-	query := `SELECT id, private_key, description,joined,verified FROM communities_communities WHERE private_key IS NOT NULL`
+	query := communitiesBaseQuery + ` WHERE c.private_key IS NOT NULL`
 	return p.queryCommunities(memberIdentity, query)
 }
 
@@ -84,8 +87,9 @@ func (p *Persistence) GetByID(memberIdentity *ecdsa.PublicKey, id []byte) (*Comm
 	var publicKeyBytes, privateKeyBytes, descriptionBytes []byte
 	var joined bool
 	var verified bool
+	var requestedToJoinAt sql.NullInt64
 
-	err := p.db.QueryRow(`SELECT id, private_key, description, joined,verified FROM communities_communities WHERE id = ?`, id).Scan(&publicKeyBytes, &privateKeyBytes, &descriptionBytes, &joined, &verified)
+	err := p.db.QueryRow(communitiesBaseQuery+` WHERE c.id = ?`, common.PubkeyToHex(memberIdentity), id).Scan(&publicKeyBytes, &privateKeyBytes, &descriptionBytes, &joined, &verified, &requestedToJoinAt)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -93,10 +97,10 @@ func (p *Persistence) GetByID(memberIdentity *ecdsa.PublicKey, id []byte) (*Comm
 		return nil, err
 	}
 
-	return unmarshalCommunityFromDB(memberIdentity, publicKeyBytes, privateKeyBytes, descriptionBytes, joined, verified, p.logger)
+	return unmarshalCommunityFromDB(memberIdentity, publicKeyBytes, privateKeyBytes, descriptionBytes, joined, verified, uint64(requestedToJoinAt.Int64), p.logger)
 }
 
-func unmarshalCommunityFromDB(memberIdentity *ecdsa.PublicKey, publicKeyBytes, privateKeyBytes, descriptionBytes []byte, joined, verified bool, logger *zap.Logger) (*Community, error) {
+func unmarshalCommunityFromDB(memberIdentity *ecdsa.PublicKey, publicKeyBytes, privateKeyBytes, descriptionBytes []byte, joined, verified bool, requestedToJoinAt uint64, logger *zap.Logger) (*Community, error) {
 
 	var privateKey *ecdsa.PrivateKey
 	var err error
@@ -134,6 +138,7 @@ func unmarshalCommunityFromDB(memberIdentity *ecdsa.PublicKey, publicKeyBytes, p
 		Logger:                        logger,
 		ID:                            id,
 		Verified:                      verified,
+		RequestedToJoinAt:             requestedToJoinAt,
 		Joined:                        joined,
 	}
 	return New(config)

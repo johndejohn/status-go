@@ -502,6 +502,7 @@ func (m *Manager) RequestToJoin(requester *ecdsa.PublicKey, request *requests.Re
 	if err := m.persistence.SaveRequestToJoin(requestToJoin); err != nil {
 		return nil, nil, err
 	}
+	community.config.RequestedToJoinAt = clock
 
 	return community, requestToJoin, nil
 }

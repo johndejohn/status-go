@@ -24,6 +24,6 @@ type RequestToJoin struct {
 }
 
 func (r *RequestToJoin) CalculateID() {
-	idString := fmt.Sprintf("%d-%s-%s", r.Clock, r.PublicKey, r.CommunityID)
+	idString := fmt.Sprintf("%s-%s", r.PublicKey, r.CommunityID)
 	r.ID = crypto.Keccak256([]byte(idString))
 }

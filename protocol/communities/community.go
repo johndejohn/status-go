@@ -26,9 +26,9 @@ type Config struct {
 	MarshaledCommunityDescription []byte
 	ID                            *ecdsa.PublicKey
 	Joined                        bool
-	RequestToJoin                 *RequestToJoin
 	Verified                      bool
 	Logger                        *zap.Logger
+	RequestedToJoinAt             uint64
 	MemberIdentity                *ecdsa.PublicKey
 }
 
@@ -81,16 +81,18 @@ func (o *Community) MarshalJSON() ([]byte, error) {
 		Members           map[string]*protobuf.CommunityMember `json:"members"`
 		CanRequestAccess  bool                                 `json:"canRequestAccess"`
 		CanManageUsers    bool                                 `json:"canManageUsers"`
+		RequestedToJoinAt uint64                               `json:"requestedToJoinAt,omitempty"`
 		IsMember          bool                                 `json:"isMember"`
 	}{
-		ID:               o.IDString(),
-		Admin:            o.IsAdmin(),
-		Verified:         o.config.Verified,
-		Chats:            make(map[string]CommunityChat),
-		Joined:           o.config.Joined,
-		CanRequestAccess: o.CanRequestAccess(o.config.MemberIdentity),
-		CanManageUsers:   o.CanManageUsers(o.config.MemberIdentity),
-		IsMember:         o.hasMember(o.config.MemberIdentity),
+		ID:                o.IDString(),
+		Admin:             o.IsAdmin(),
+		Verified:          o.config.Verified,
+		Chats:             make(map[string]CommunityChat),
+		Joined:            o.config.Joined,
+		CanRequestAccess:  o.CanRequestAccess(o.config.MemberIdentity),
+		CanManageUsers:    o.CanManageUsers(o.config.MemberIdentity),
+		RequestedToJoinAt: o.RequestedToJoinAt(),
+		IsMember:          o.hasMember(o.config.MemberIdentity),
 	}
 	if o.config.CommunityDescription != nil {
 		for id, c := range o.config.CommunityDescription.Chats {
@@ -822,6 +824,10 @@ func (o *Community) CanManageUsers(pk *ecdsa.PublicKey) bool {
 
 	return o.hasPermission(pk, protobuf.CommunityMember_ROLE_ALL) || o.hasPermission(pk, protobuf.CommunityMember_ROLE_MANAGE_USERS)
 
+}
+
+func (o *Community) RequestedToJoinAt() uint64 {
+	return o.config.RequestedToJoinAt
 }
 
 func (o *Community) nextClock() uint64 {

@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"errors"
@@ -549,6 +550,24 @@ func (s *MessengerCommunitiesSuite) TestRequestAccess() {
 	s.Require().NotEmpty(requestToJoin1.Clock)
 	s.Require().Equal(requestToJoin1.PublicKey, common.PubkeyToHex(&s.alice.identity.PublicKey))
 	s.Require().Equal(communities.RequestToJoinStatePending, requestToJoin1.State)
+
+	// Make sure clock is not empty
+	s.Require().NotEmpty(requestToJoin1.Clock)
+
+	s.Require().Len(response.Communities, 1)
+	s.Require().Equal(response.Communities[0].RequestedToJoinAt(), requestToJoin1.Clock)
+
+	// pull all communities to make sure we set RequestedToJoinAt
+
+	allCommunities, err := s.alice.Communities()
+	s.Require().NoError(err)
+	s.Require().Len(allCommunities, 2)
+
+	if bytes.Equal(allCommunities[0].ID(), community.ID()) {
+		s.Require().Equal(allCommunities[0].RequestedToJoinAt(), requestToJoin1.Clock)
+	} else {
+		s.Require().Equal(allCommunities[1].RequestedToJoinAt(), requestToJoin1.Clock)
+	}
 
 	// pull to make sure it has been saved
 	requestsToJoin, err := s.alice.MyPendingRequestsToJoin()
