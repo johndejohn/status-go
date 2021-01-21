@@ -154,6 +154,9 @@ func (m *Manager) CreateCommunity(description *protobuf.CommunityDescription) (*
 		return nil, err
 	}
 
+	// We join any community we create
+	community.Join()
+
 	err = m.persistence.SaveCommunity(community)
 	if err != nil {
 		return nil, err
