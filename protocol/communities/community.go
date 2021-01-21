@@ -55,11 +55,19 @@ func New(config Config) (*Community, error) {
 	return community, nil
 }
 
+type CommunityChat struct {
+	ID          string                               `json:"id"`
+	Name        string                               `json:"name"`
+	Members     map[string]*protobuf.CommunityMember `json:"members"`
+	Permissions *protobuf.CommunityPermissions       `json:"permissions"`
+	CanPost     bool                                 `json:"canPost"`
+}
+
 func (o *Community) MarshalJSON() ([]byte, error) {
 	if o.config.MemberIdentity == nil {
 		return nil, errors.New("member identity not set")
 	}
-	item := struct {
+	communityItem := struct {
 		ID                string                               `json:"id"`
 		Admin             bool                                 `json:"admin"`
 		Verified          bool                                 `json:"verified"`
@@ -67,7 +75,7 @@ func (o *Community) MarshalJSON() ([]byte, error) {
 		RequestedAccessAt int                                  `json:"requestedAccessAt"`
 		Name              string                               `json:"name"`
 		Description       string                               `json:"description"`
-		Chats             map[string]*protobuf.CommunityChat   `json:"chats"`
+		Chats             map[string]CommunityChat             `json:"chats"`
 		Images            map[string]images.IdentityImage      `json:"images"`
 		Permissions       *protobuf.CommunityPermissions       `json:"permissions"`
 		Members           map[string]*protobuf.CommunityMember `json:"members"`
@@ -78,29 +86,43 @@ func (o *Community) MarshalJSON() ([]byte, error) {
 		ID:               o.IDString(),
 		Admin:            o.IsAdmin(),
 		Verified:         o.config.Verified,
+		Chats:            make(map[string]CommunityChat),
 		Joined:           o.config.Joined,
 		CanRequestAccess: o.CanRequestAccess(o.config.MemberIdentity),
 		CanManageUsers:   o.CanManageUsers(o.config.MemberIdentity),
 		IsMember:         o.hasMember(o.config.MemberIdentity),
 	}
 	if o.config.CommunityDescription != nil {
-		item.Chats = o.config.CommunityDescription.Chats
-		item.Members = o.config.CommunityDescription.Members
-		item.Permissions = o.config.CommunityDescription.Permissions
+		for id, c := range o.config.CommunityDescription.Chats {
+			canPost, err := o.CanPost(o.config.MemberIdentity, id, nil)
+			if err != nil {
+				return nil, err
+			}
+			chat := CommunityChat{
+				ID:          id,
+				Name:        c.Identity.DisplayName,
+				Permissions: c.Permissions,
+				Members:     c.Members,
+				CanPost:     canPost,
+			}
+			communityItem.Chats[id] = chat
+		}
+		communityItem.Members = o.config.CommunityDescription.Members
+		communityItem.Permissions = o.config.CommunityDescription.Permissions
 		if o.config.CommunityDescription.Identity != nil {
-			item.Name = o.config.CommunityDescription.Identity.DisplayName
-			item.Description = o.config.CommunityDescription.Identity.Description
+			communityItem.Name = o.config.CommunityDescription.Identity.DisplayName
+			communityItem.Description = o.config.CommunityDescription.Identity.Description
 			for t, i := range o.config.CommunityDescription.Identity.Images {
-				if item.Images == nil {
-					item.Images = make(map[string]images.IdentityImage)
+				if communityItem.Images == nil {
+					communityItem.Images = make(map[string]images.IdentityImage)
 				}
-				item.Images[t] = images.IdentityImage{Name: t, Payload: i.Payload}
+				communityItem.Images[t] = images.IdentityImage{Name: t, Payload: i.Payload}
 
 			}
 		}
 
 	}
-	return json.Marshal(item)
+	return json.Marshal(communityItem)
 }
 
 func (o *Community) initialize() {
