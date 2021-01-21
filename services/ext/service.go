@@ -185,7 +185,6 @@ func (s *Service) StartMessenger() (*protocol.MessengerResponse, error) {
 func publishMessengerResponse(response *protocol.MessengerResponse) {
 	if !response.IsEmpty() {
 		PublisherSignalHandler{}.NewMessages(response)
-		localnotifications.SendMessageNotifications(response.Notifications)
 	}
 }
 

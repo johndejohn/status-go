@@ -515,6 +515,7 @@ func (m *Manager) PendingRequestsToJoinForUser(pk *ecdsa.PublicKey) ([]*RequestT
 }
 
 func (m *Manager) PendingRequestsToJoinForCommunity(id types.HexBytes) ([]*RequestToJoin, error) {
+	m.logger.Info("fetching pending invitations", zap.String("community-id", id.String()))
 	return m.persistence.PendingRequestsToJoinForCommunity(id)
 }
 

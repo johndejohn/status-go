@@ -68,7 +68,7 @@ func (o *Community) MarshalJSON() ([]byte, error) {
 		return nil, errors.New("member identity not set")
 	}
 	communityItem := struct {
-		ID                string                               `json:"id"`
+		ID                types.HexBytes                       `json:"id"`
 		Admin             bool                                 `json:"admin"`
 		Verified          bool                                 `json:"verified"`
 		Joined            bool                                 `json:"joined"`
@@ -85,7 +85,7 @@ func (o *Community) MarshalJSON() ([]byte, error) {
 		RequestedToJoinAt uint64                               `json:"requestedToJoinAt,omitempty"`
 		IsMember          bool                                 `json:"isMember"`
 	}{
-		ID:                o.IDString(),
+		ID:                o.ID(),
 		Admin:             o.IsAdmin(),
 		Verified:          o.config.Verified,
 		Chats:             make(map[string]CommunityChat),

@@ -8,8 +8,8 @@ import (
 var ErrRequestToJoinCommunityInvalidCommunityID = errors.New("request-to-join-community: invalid community id")
 
 type RequestToJoinCommunity struct {
-	CommunityID types.HexBytes
-	ENSName     string
+	CommunityID types.HexBytes `json:"communityId"`
+	ENSName     string         `json:"ensName"`
 }
 
 func (j *RequestToJoinCommunity) Validate() error {

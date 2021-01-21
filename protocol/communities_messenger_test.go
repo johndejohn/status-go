@@ -574,6 +574,11 @@ func (s *MessengerCommunitiesSuite) TestRequestAccess() {
 	s.Require().NoError(err)
 	s.Require().Len(requestsToJoin, 1)
 
+	// Make sure the requests are fetched also by community
+	requestsToJoin, err = s.alice.PendingRequestsToJoinForCommunity(community.ID())
+	s.Require().NoError(err)
+	s.Require().Len(requestsToJoin, 1)
+
 	// Retrieve request to join
 	err = tt.RetryWithBackOff(func() error {
 		response, err = s.bob.RetrieveAll()
