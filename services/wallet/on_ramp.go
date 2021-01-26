@@ -20,23 +20,30 @@ type CryptoOnRamp struct {
 	SiteURL     string `json:"siteUrl"`
 }
 
-type CryptoOnRamps []CryptoOnRamp
+type CryptoOnRampManager struct {
+	ramps []CryptoOnRamp
+	LastCalled time.Time
+}
 
-// TODO introduce some caching to cache results and prevent spamming, maybe an hour's cache
-func (c *CryptoOnRamps) Get() error {
+func (c *CryptoOnRampManager) Get() ([]CryptoOnRamp, error) {
+	// TODO deal with case where the c.LastCalled is not yet set
+	if c.LastCalled.Add(time.Hour).Before(time.Now()) {
+		return c.ramps, nil
+	}
+
 	sgc := http.Client{
 		Timeout: time.Second * 2,
 	}
 
 	req, err := http.NewRequest(http.MethodGet, cryptoOnRampsData, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("User-Agent", "status-go")
 
 	res, err := sgc.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if res.Body != nil {
@@ -45,13 +52,14 @@ func (c *CryptoOnRamps) Get() error {
 
 	body, err := ioutil.ReadAll(res.Body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	err = json.Unmarshal(body, &c)
+	err = json.Unmarshal(body, &c.ramps)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	c.LastCalled = time.Now()
+	return c.ramps, nil
 }

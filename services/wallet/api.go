@@ -185,11 +185,12 @@ func (api *API) AddFavourite(ctx context.Context, favourite Favourite) error {
 }
 
 func (api *API) GetCryptoOnRamps(ctx context.Context) ([]CryptoOnRamp, error) {
-	cs := CryptoOnRamps{}
-	err := cs.Get()
+	// TODO attach ramp manager to the service to preserve state between calls
+	cm := CryptoOnRampManager{}
+	rs, err := cm.Get()
 	if err != nil {
 		return nil, err
 	}
 
-	return cs, nil
+	return rs, nil
 }

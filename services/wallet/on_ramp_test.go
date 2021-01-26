@@ -7,10 +7,10 @@ import (
 )
 
 func TestCryptoOnRamps_Get(t *testing.T) {
-	cors := CryptoOnRamps{}
-	require.Equal(t, 0, len(cors))
+	cors := CryptoOnRampManager{}
+	require.Equal(t, 0, len(cors.ramps))
 
-	err := cors.Get()
+	rs, err := cors.Get()
 	require.NoError(t, err)
-	require.Greater(t, len(cors), 0)
+	require.Greater(t, len(rs), 0)
 }
