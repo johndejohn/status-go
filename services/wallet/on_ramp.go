@@ -12,12 +12,12 @@ const (
 )
 
 type CryptoOnRamp struct {
-	Name string `json:"name"`
+	Name        string `json:"name"`
 	Description string `json:"description"`
-	Fees string `json:"fees"`
-	Region string `json:"region"`
-	LogoUrl string `json:"logoUrl"`
-	SiteUrl string `json:"siteUrl"`
+	Fees        string `json:"fees"`
+	Region      string `json:"region"`
+	LogoUrl     string `json:"logoUrl"`
+	SiteUrl     string `json:"siteUrl"`
 }
 
 type CryptoOnRamps []CryptoOnRamp
