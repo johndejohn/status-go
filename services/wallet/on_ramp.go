@@ -16,8 +16,8 @@ type CryptoOnRamp struct {
 	Description string `json:"description"`
 	Fees        string `json:"fees"`
 	Region      string `json:"region"`
-	LogoUrl     string `json:"logoUrl"`
-	SiteUrl     string `json:"siteUrl"`
+	LogoURL     string `json:"logoUrl"`
+	SiteURL     string `json:"siteUrl"`
 }
 
 type CryptoOnRamps []CryptoOnRamp
