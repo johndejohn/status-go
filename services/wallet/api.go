@@ -3,11 +3,10 @@ package wallet
 import (
 	"context"
 	"errors"
-	"math/big"
-
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/log"
+	"math/big"
 )
 
 var (
@@ -182,4 +181,14 @@ func (api *API) AddFavourite(ctx context.Context, favourite Favourite) error {
 	err := api.s.db.AddFavourite(favourite)
 	log.Debug("result from database for create or update favouritesn", "err", err)
 	return err
+}
+
+func (api *API) GetCryptoOnRamps(ctx context.Context) ([]CryptoOnRamp, error) {
+	cs := CryptoOnRamps{}
+	err := cs.Get()
+	if err != nil {
+		return nil, err
+	}
+
+	return cs, nil
 }
