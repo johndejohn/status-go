@@ -27,7 +27,8 @@ func TestCryptoOnRamps_Get(t *testing.T) {
 
 func TestCryptoOnRampManager_hasCacheExpired(t *testing.T) {
 	corm := NewCryptoOnRampManager(&CryptoOnRampOptions{
-		dataSourceType: DataSourceStatic,
+		dataSourceType: DataSourceHTTP,
+		dataSource:     cryptoOnRampsData,
 	})
 	nt := time.Time{}.Add(30 * time.Minute)
 
