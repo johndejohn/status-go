@@ -180,14 +180,16 @@ func (api *API) GetFavourites(ctx context.Context) ([]*Favourite, error) {
 func (api *API) AddFavourite(ctx context.Context, favourite Favourite) error {
 	log.Debug("call to create or update favourites")
 	err := api.s.db.AddFavourite(favourite)
-	log.Debug("result from database for create or update favouritesn", "err", err)
+	log.Debug("result from database for create or update favourites", "err", err)
 	return err
 }
 
 func (api *API) GetCryptoOnRamps(ctx context.Context) ([]CryptoOnRamp, error) {
-	// TODO attach ramp manager to the service to preserve state between calls
-	cm := CryptoOnRampManager{}
-	rs, err := cm.Get()
+	if api.s.cryptoOnRampManager == nil {
+		api.s.cryptoOnRampManager = new(CryptoOnRampManager)
+	}
+
+	rs, err := api.s.cryptoOnRampManager.Get()
 	if err != nil {
 		return nil, err
 	}
