@@ -21,9 +21,9 @@
 // 1603888149_create_chat_identity_last_published_table.up.sql (407B)
 // 1605075346_add_communities.up.sql (6.971kB)
 // 1610117927_add_message_cache.up.sql (142B)
-// 1610361835_add_communities_request_to_join.up.sql (626B)
 // 1610959908_add_dont_wrap_to_raw_messages.up.sql (83B)
 // 1610960912_add_send_on_personal_topic.up.sql (82B)
+// 1611740625__add_communities_request_to_join.up.sql (626B)
 // README.md (554B)
 // doc.go (850B)
 
@@ -514,26 +514,6 @@ func _1610117927_add_message_cacheUpSql() (*asset, error) {
 	return a, nil
 }
 
-var __1610361835_add_communities_request_to_joinUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x8c\x90\xc1\x4e\xf4\x20\x14\x85\xf7\x3c\xc5\xcd\xac\xa6\xc9\xbf\xf8\xf7\xae\x68\xa5\xb1\x11\x61\x82\x8c\xc9\xac\x48\xa5\xd7\x88\x33\x05\x2d\xd4\xd8\xb7\x37\xad\x46\xad\x9d\xcc\xb8\xe5\x9c\x4b\xbe\xf3\x15\x8a\x51\xcd\x40\xd3\x9c\x33\xb0\xa1\x6d\x7b\xef\x92\xc3\x68\x3a\x7c\xe9\x31\xa6\x68\x52\x30\x4f\xc1\x79\x80\x35\x01\x70\x0d\xe4\x5c\xe6\x20\xa4\x06\xb1\xe5\xfc\x1f\x01\x78\xee\xef\x0f\xce\x9a\x3d\x0e\x70\x47\x55\x71\x45\xd5\x2c\xb6\x87\x60\xf7\x50\x09\x3d\x7b\x45\x1f\x8d\xaf\x5b\x5c\x9c\xc0\x25\x2b\xe9\x96\x6b\x58\xad\xa6\xeb\xc7\x3a\x19\xd7\x9c\xad\x7d\x92\x0f\xe6\x18\x61\x4c\x75\xc2\x19\xc2\xd7\xf9\xff\x31\xdf\xa8\xea\x86\xaa\x1d\x5c\xb3\x1d\xac\x5d\x93\x91\xec\x82\x10\x32\x53\x33\xf2\xbe\x62\xe7\x1e\x9c\xad\x93\x0b\xde\x74\x68\x43\xd7\xc4\xc9\xca\x19\x03\x47\x77\x8e\xc1\xc7\x87\xd8\x40\x2e\x25\x67\x54\x2c\xf1\x4a\xca\x6f\xd9\xcf\xaa\xa9\xd3\x89\x21\x4b\xd7\xf3\xfc\xd7\x82\xd4\x39\x8c\x27\xea\x1e\xdf\xd2\x54\x1b\xfe\x2a\xef\xdb\x44\x06\x52\x40\x21\x45\xc9\xab\x42\x83\x62\x1b\x4e\x0b\x36\x8a\x7d\x0f\x00\x00\xff\xff\x08\x94\x8f\x31\x72\x02\x00\x00")
-
-func _1610361835_add_communities_request_to_joinUpSqlBytes() ([]byte, error) {
-	return bindataRead(
-		__1610361835_add_communities_request_to_joinUpSql,
-		"1610361835_add_communities_request_to_join.up.sql",
-	)
-}
-
-func _1610361835_add_communities_request_to_joinUpSql() (*asset, error) {
-	bytes, err := _1610361835_add_communities_request_to_joinUpSqlBytes()
-	if err != nil {
-		return nil, err
-	}
-
-	info := bindataFileInfo{name: "1610361835_add_communities_request_to_join.up.sql", size: 626, mode: os.FileMode(0644), modTime: time.Unix(1611737693, 0)}
-	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x37, 0xaf, 0x1, 0x27, 0x6a, 0x6c, 0x42, 0x17, 0xb4, 0xd2, 0xe1, 0x85, 0xee, 0xf6, 0x5b, 0x51, 0xb7, 0x13, 0x22, 0x94, 0xfb, 0x5a, 0x8, 0xc9, 0xf8, 0xef, 0xfc, 0x3f, 0xa2, 0x63, 0xc7, 0x8b}}
-	return a, nil
-}
-
 var __1610959908_add_dont_wrap_to_raw_messagesUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x72\xf4\x09\x71\x0d\x52\x08\x71\x74\xf2\x71\x55\x28\x4a\x2c\x8f\xcf\x4d\x2d\x2e\x4e\x4c\x4f\x2d\x56\x70\x74\x71\x51\x70\xf6\xf7\x09\xf5\xf5\x53\x28\xce\xce\x2c\x88\x4f\x2f\xca\x2f\x2d\x80\x49\xc7\x97\x17\x25\x16\x28\x38\xf9\xfb\xfb\xb8\x3a\xfa\x29\xb8\xb8\xba\x39\x86\xfa\x84\x28\xb8\x39\xfa\x04\xbb\x5a\x73\x01\x02\x00\x00\xff\xff\x3c\x1f\xd3\xe4\x53\x00\x00\x00")
 
 func _1610959908_add_dont_wrap_to_raw_messagesUpSqlBytes() ([]byte, error) {
@@ -571,6 +551,26 @@ func _1610960912_add_send_on_personal_topicUpSql() (*asset, error) {
 
 	info := bindataFileInfo{name: "1610960912_add_send_on_personal_topic.up.sql", size: 82, mode: os.FileMode(0644), modTime: time.Unix(1611736492, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x77, 0xac, 0x2f, 0xc4, 0xd, 0xa7, 0x1b, 0x37, 0x30, 0xc2, 0x68, 0xee, 0xde, 0x54, 0x5e, 0xbf, 0x3f, 0xa0, 0xd6, 0xc6, 0x9f, 0xd4, 0x34, 0x12, 0x76, 0x1e, 0x66, 0x4a, 0xfc, 0xf, 0xee, 0xc9}}
+	return a, nil
+}
+
+var __1611740625__add_communities_request_to_joinUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x8c\x90\xc1\x4e\xf4\x20\x14\x85\xf7\x3c\xc5\xcd\xac\xa6\xc9\xbf\xf8\xf7\xae\x68\xa5\xb1\x11\x61\x82\x8c\xc9\xac\x48\xa5\xd7\x88\x33\x05\x2d\xd4\xd8\xb7\x37\xad\x46\xad\x9d\xcc\xb8\xe5\x9c\x4b\xbe\xf3\x15\x8a\x51\xcd\x40\xd3\x9c\x33\xb0\xa1\x6d\x7b\xef\x92\xc3\x68\x3a\x7c\xe9\x31\xa6\x68\x52\x30\x4f\xc1\x79\x80\x35\x01\x70\x0d\xe4\x5c\xe6\x20\xa4\x06\xb1\xe5\xfc\x1f\x01\x78\xee\xef\x0f\xce\x9a\x3d\x0e\x70\x47\x55\x71\x45\xd5\x2c\xb6\x87\x60\xf7\x50\x09\x3d\x7b\x45\x1f\x8d\xaf\x5b\x5c\x9c\xc0\x25\x2b\xe9\x96\x6b\x58\xad\xa6\xeb\xc7\x3a\x19\xd7\x9c\xad\x7d\x92\x0f\xe6\x18\x61\x4c\x75\xc2\x19\xc2\xd7\xf9\xff\x31\xdf\xa8\xea\x86\xaa\x1d\x5c\xb3\x1d\xac\x5d\x93\x91\xec\x82\x10\x32\x53\x33\xf2\xbe\x62\xe7\x1e\x9c\xad\x93\x0b\xde\x74\x68\x43\xd7\xc4\xc9\xca\x19\x03\x47\x77\x8e\xc1\xc7\x87\xd8\x40\x2e\x25\x67\x54\x2c\xf1\x4a\xca\x6f\xd9\xcf\xaa\xa9\xd3\x89\x21\x4b\xd7\xf3\xfc\xd7\x82\xd4\x39\x8c\x27\xea\x1e\xdf\xd2\x54\x1b\xfe\x2a\xef\xdb\x44\x06\x52\x40\x21\x45\xc9\xab\x42\x83\x62\x1b\x4e\x0b\x36\x8a\x7d\x0f\x00\x00\xff\xff\x08\x94\x8f\x31\x72\x02\x00\x00")
+
+func _1611740625__add_communities_request_to_joinUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1611740625__add_communities_request_to_joinUpSql,
+		"1611740625__add_communities_request_to_join.up.sql",
+	)
+}
+
+func _1611740625__add_communities_request_to_joinUpSql() (*asset, error) {
+	bytes, err := _1611740625__add_communities_request_to_joinUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1611740625__add_communities_request_to_join.up.sql", size: 626, mode: os.FileMode(0644), modTime: time.Unix(1611740609, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x37, 0xaf, 0x1, 0x27, 0x6a, 0x6c, 0x42, 0x17, 0xb4, 0xd2, 0xe1, 0x85, 0xee, 0xf6, 0x5b, 0x51, 0xb7, 0x13, 0x22, 0x94, 0xfb, 0x5a, 0x8, 0xc9, 0xf8, 0xef, 0xfc, 0x3f, 0xa2, 0x63, 0xc7, 0x8b}}
 	return a, nil
 }
 
@@ -747,11 +747,11 @@ var _bindata = map[string]func() (*asset, error){
 
 	"1610117927_add_message_cache.up.sql": _1610117927_add_message_cacheUpSql,
 
-	"1610361835_add_communities_request_to_join.up.sql": _1610361835_add_communities_request_to_joinUpSql,
-
 	"1610959908_add_dont_wrap_to_raw_messages.up.sql": _1610959908_add_dont_wrap_to_raw_messagesUpSql,
 
 	"1610960912_add_send_on_personal_topic.up.sql": _1610960912_add_send_on_personal_topicUpSql,
+
+	"1611740625__add_communities_request_to_join.up.sql": _1611740625__add_communities_request_to_joinUpSql,
 
 	"README.md": readmeMd,
 
@@ -820,9 +820,9 @@ var _bintree = &bintree{nil, map[string]*bintree{
 	"1603888149_create_chat_identity_last_published_table.up.sql": &bintree{_1603888149_create_chat_identity_last_published_tableUpSql, map[string]*bintree{}},
 	"1605075346_add_communities.up.sql":                           &bintree{_1605075346_add_communitiesUpSql, map[string]*bintree{}},
 	"1610117927_add_message_cache.up.sql":                         &bintree{_1610117927_add_message_cacheUpSql, map[string]*bintree{}},
-	"1610361835_add_communities_request_to_join.up.sql":           &bintree{_1610361835_add_communities_request_to_joinUpSql, map[string]*bintree{}},
 	"1610959908_add_dont_wrap_to_raw_messages.up.sql":             &bintree{_1610959908_add_dont_wrap_to_raw_messagesUpSql, map[string]*bintree{}},
 	"1610960912_add_send_on_personal_topic.up.sql":                &bintree{_1610960912_add_send_on_personal_topicUpSql, map[string]*bintree{}},
+	"1611740625__add_communities_request_to_join.up.sql":          &bintree{_1611740625__add_communities_request_to_joinUpSql, map[string]*bintree{}},
 	"README.md": &bintree{readmeMd, map[string]*bintree{}},
 	"doc.go":    &bintree{docGo, map[string]*bintree{}},
 }}
