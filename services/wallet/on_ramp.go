@@ -2,6 +2,7 @@ package wallet
 
 import (
 	"encoding/json"
+	"errors"
 	"io/ioutil"
 	"net/http"
 	"time"
@@ -21,13 +22,24 @@ type CryptoOnRamp struct {
 }
 
 type CryptoOnRampManager struct {
-	ramps []CryptoOnRamp
+	dataSource string
+	ramps      []CryptoOnRamp
 	LastCalled time.Time
 }
 
+func NewCryptoOnRampManager(dataSource string) *CryptoOnRampManager {
+	return &CryptoOnRampManager{
+		dataSource: dataSource,
+	}
+}
+
+// TODO(Samyoul) Make getting the datasource independent of http.Client
 func (c *CryptoOnRampManager) Get() ([]CryptoOnRamp, error) {
-	// TODO deal with case where the c.LastCalled is not yet set
-	if c.LastCalled.Add(time.Hour).Before(time.Now()) {
+	if c.dataSource == "" {
+		return c.ramps, errors.New("data source is not set for CryptoOnRampManager")
+	}
+
+	if !c.hasCacheExpired(time.Now()) {
 		return c.ramps, nil
 	}
 
@@ -35,7 +47,7 @@ func (c *CryptoOnRampManager) Get() ([]CryptoOnRamp, error) {
 		Timeout: time.Second * 2,
 	}
 
-	req, err := http.NewRequest(http.MethodGet, cryptoOnRampsData, nil)
+	req, err := http.NewRequest(http.MethodGet, c.dataSource, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -62,4 +74,13 @@ func (c *CryptoOnRampManager) Get() ([]CryptoOnRamp, error) {
 
 	c.LastCalled = time.Now()
 	return c.ramps, nil
+}
+
+func (c *CryptoOnRampManager) hasCacheExpired(t time.Time) bool {
+	// If LastCalled + 1 hour is after the given time, then 1 hour hasn't passed yet
+	if c.LastCalled.Add(time.Hour).After(t) {
+		return false
+	}
+
+	return true
 }
