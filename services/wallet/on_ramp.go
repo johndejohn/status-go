@@ -74,11 +74,7 @@ func (c *CryptoOnRampManager) Get() ([]CryptoOnRamp, error) {
 
 func (c *CryptoOnRampManager) hasCacheExpired(t time.Time) bool {
 	// If LastCalled + 1 hour is after the given time, then 1 hour hasn't passed yet
-	if c.LastCalled.Add(time.Hour).After(t) {
-		return false
-	}
-
-	return true
+	return c.LastCalled.Add(time.Hour).After(t)
 }
 
 func (c *CryptoOnRampManager) getFromHttpDataSource() ([]byte, error) {
