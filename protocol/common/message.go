@@ -117,6 +117,8 @@ type Message struct {
 	Base64Audio string `json:"audio,omitempty"`
 	// AudioPath is the path of the audio to be sent
 	AudioPath string `json:"audioPath,omitempty"`
+	// ImageLocalURL is the local url of the image
+	ImageLocalURL string `json:"imageLocalUrl,omitempty"`
 
 	// CommunityID is the id of the community to advertise
 	CommunityID string `json:"communityId,omitempty"`
@@ -133,6 +135,11 @@ type Message struct {
 
 	// Links is an array of links within given message
 	Links []string
+}
+
+func (m *Message) PrepareImageURL(port int) {
+	m.ImageLocalURL = fmt.Sprintf("http://localhost:%d/messages/images?messageId=%s", port, m.ID)
+	m.Identicon = fmt.Sprintf("http://localhost:%d/messages/identicons?publicKey=%s", port, m.From)
 }
 
 func (m *Message) MarshalJSON() ([]byte, error) {
@@ -191,7 +198,7 @@ func (m *Message) MarshalJSON() ([]byte, error) {
 		ResponseTo:        m.ResponseTo,
 		New:               m.New,
 		EnsName:           m.EnsName,
-		Image:             m.Base64Image,
+		Image:             m.ImageLocalURL,
 		Audio:             m.Base64Audio,
 		CommunityID:       m.CommunityID,
 		Timestamp:         m.Timestamp,

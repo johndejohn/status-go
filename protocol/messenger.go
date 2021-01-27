@@ -101,6 +101,7 @@ type Messenger struct {
 	multiAccounts              *multiaccounts.Database
 	account                    *multiaccounts.Account
 	mailserversDatabase        *mailservers.Database
+	imageServer                *images.Server
 	quit                       chan struct{}
 
 	mutex sync.Mutex
@@ -280,6 +281,8 @@ func NewMessenger(
 	}
 	handler := newMessageHandler(identity, logger, &sqlitePersistence{db: database}, communitiesManager, transp, ensVerifier)
 
+	imageServer := images.NewServer(database, logger)
+
 	messenger = &Messenger{
 		config:                     &c,
 		node:                       node,
@@ -305,6 +308,7 @@ func NewMessenger(
 		multiAccounts:              c.multiAccount,
 		mailserversDatabase:        c.mailserversDatabase,
 		account:                    c.account,
+		imageServer:                imageServer,
 		quit:                       make(chan struct{}),
 		shutdownTasks: []func() error{
 			ensVerifier.Stop,
@@ -312,6 +316,7 @@ func NewMessenger(
 			communitiesManager.Stop,
 			encryptionProtocol.Stop,
 			transp.ResetFilters,
+			imageServer.Stop,
 			transp.Stop,
 			func() error { processor.Stop(); return nil },
 			// Currently this often fails, seems like it's safe to ignore them
@@ -474,6 +479,11 @@ func (m *Messenger) Start() (*MessengerResponse, error) {
 		response.Mailservers = mailservers
 
 	}
+	err = m.imageServer.Start()
+	if err != nil {
+		return nil, err
+	}
+
 	return response, nil
 }
 
@@ -3051,6 +3061,8 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 	}
 	messageState.Response.Messages = messagesWithResponses
 
+	m.prepareMessages(messageState.Response.Messages)
+
 	for _, message := range messageState.Response.Messages {
 		if _, ok := newMessagesIds[message.ID]; ok {
 			message.New = true
@@ -3110,6 +3122,8 @@ func (m *Messenger) MessageByChatID(chatID, cursor string, limit int) ([]*common
 		return nil, "", err
 	}
 
+	var msgs []*common.Message
+	var nextCursor string
 	if chat.Timeline() {
 		var chatIDs = []string{"@" + contactIDFromPublicKey(&m.identity.PublicKey)}
 		contacts, err := m.persistence.Contacts()
@@ -3121,9 +3135,26 @@ func (m *Messenger) MessageByChatID(chatID, cursor string, limit int) ([]*common
 				chatIDs = append(chatIDs, "@"+contact.ID)
 			}
 		}
-		return m.persistence.MessageByChatIDs(chatIDs, cursor, limit)
+		msgs, nextCursor, err = m.persistence.MessageByChatIDs(chatIDs, cursor, limit)
+		if err != nil {
+			return nil, "", err
+		}
+	} else {
+		msgs, nextCursor, err = m.persistence.MessageByChatID(chatID, cursor, limit)
+		if err != nil {
+			return nil, "", err
+		}
+
 	}
-	return m.persistence.MessageByChatID(chatID, cursor, limit)
+	m.prepareMessages(msgs)
+	return msgs, nextCursor, nil
+}
+
+func (m *Messenger) prepareMessages(messages []*common.Message) {
+	for idx := range messages {
+		messages[idx].PrepareImageURL(m.imageServer.Port)
+	}
+
 }
 
 func (m *Messenger) SaveMessages(messages []*common.Message) error {
