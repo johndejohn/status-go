@@ -186,7 +186,11 @@ func (api *API) AddFavourite(ctx context.Context, favourite Favourite) error {
 
 func (api *API) GetCryptoOnRamps(ctx context.Context) ([]CryptoOnRamp, error) {
 	if api.s.cryptoOnRampManager == nil {
-		api.s.cryptoOnRampManager = NewCryptoOnRampManager(cryptoOnRampsData)
+		// TODO Add settings and then build options based on settings
+		opts := &CryptoOnRampOptions{
+			dataSourceType: DataSourceStatic,
+		}
+		api.s.cryptoOnRampManager = NewCryptoOnRampManager(opts)
 	}
 
 	rs, err := api.s.cryptoOnRampManager.Get()
