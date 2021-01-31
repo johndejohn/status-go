@@ -4,7 +4,7 @@ import "github.com/ethereum/go-ethereum/p2p/discv5"
 
 const (
 	// StatusDatabase path relative to DataDir.
-	StatusDatabase = "status-db"
+	StatusDatabase = "movement-db"
 
 	// SendTransactionMethodName defines the name for a giving transaction.
 	SendTransactionMethodName = "eth_sendTransaction"

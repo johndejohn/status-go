@@ -24,7 +24,7 @@ func (w *WakuService) Protocols() []p2p.Protocol {
 func (w *WakuService) APIs() []rpc.API {
 	return []rpc.API{
 		{
-			Namespace: "status",
+			Namespace: "movement",
 			Version:   "1.0",
 			Service:   w.Waku,
 			Public:    false,

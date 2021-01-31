@@ -48,7 +48,7 @@ func (s *Service) APIs() []rpc.API {
 
 	return []rpc.API{
 		{
-			Namespace: "status",
+			Namespace: "movement",
 			Version:   "1.0",
 			Service:   NewAPI(s),
 			Public:    false,

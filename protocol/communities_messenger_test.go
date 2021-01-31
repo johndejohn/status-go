@@ -98,8 +98,8 @@ func (s *MessengerCommunitiesSuite) TestRetrieveCommunity() {
 			Access: protobuf.CommunityPermissions_NO_MEMBERSHIP,
 		},
 		Identity: &protobuf.ChatIdentity{
-			DisplayName: "status",
-			Description: "status community description",
+			DisplayName: "movement",
+			Description: "movement community description",
 		},
 	}
 
@@ -152,8 +152,8 @@ func (s *MessengerCommunitiesSuite) TestJoinCommunity() {
 			Access: protobuf.CommunityPermissions_NO_MEMBERSHIP,
 		},
 		Identity: &protobuf.ChatIdentity{
-			DisplayName: "status",
-			Description: "status community description",
+			DisplayName: "movement",
+			Description: "movement community description",
 		},
 	}
 
@@ -170,8 +170,8 @@ func (s *MessengerCommunitiesSuite) TestJoinCommunity() {
 			Access: protobuf.CommunityPermissions_NO_MEMBERSHIP,
 		},
 		Identity: &protobuf.ChatIdentity{
-			DisplayName: "status-core",
-			Description: "status-core community chat",
+			DisplayName: "movement-core",
+			Description: "movement-core community chat",
 		},
 	}
 	response, err = s.bob.CreateCommunityChat(community.IDString(), orgChat)
@@ -251,8 +251,8 @@ func (s *MessengerCommunitiesSuite) TestJoinCommunity() {
 			Access: protobuf.CommunityPermissions_NO_MEMBERSHIP,
 		},
 		Identity: &protobuf.ChatIdentity{
-			DisplayName: "status-core-ui",
-			Description: "status-core-ui community chat",
+			DisplayName: "movement-core-ui",
+			Description: "movement-core-ui community chat",
 		},
 	}
 	response, err = s.bob.CreateCommunityChat(community.IDString(), orgChat)
@@ -305,8 +305,8 @@ func (s *MessengerCommunitiesSuite) TestInviteUserToCommunity() {
 			Access: protobuf.CommunityPermissions_NO_MEMBERSHIP,
 		},
 		Identity: &protobuf.ChatIdentity{
-			DisplayName: "status",
-			Description: "status community description",
+			DisplayName: "movement",
+			Description: "movement community description",
 		},
 	}
 
@@ -354,8 +354,8 @@ func (s *MessengerCommunitiesSuite) TestPostToCommunityChat() {
 			Access: protobuf.CommunityPermissions_INVITATION_ONLY,
 		},
 		Identity: &protobuf.ChatIdentity{
-			DisplayName: "status",
-			Description: "status community description",
+			DisplayName: "movement",
+			Description: "movement community description",
 		},
 	}
 
@@ -373,8 +373,8 @@ func (s *MessengerCommunitiesSuite) TestPostToCommunityChat() {
 			Access: protobuf.CommunityPermissions_NO_MEMBERSHIP,
 		},
 		Identity: &protobuf.ChatIdentity{
-			DisplayName: "status-core",
-			Description: "status-core community chat",
+			DisplayName: "movement-core",
+			Description: "movement-core community chat",
 		},
 	}
 
@@ -463,8 +463,8 @@ func (s *MessengerCommunitiesSuite) TestImportCommunity() {
 			Access: protobuf.CommunityPermissions_NO_MEMBERSHIP,
 		},
 		Identity: &protobuf.ChatIdentity{
-			DisplayName: "status",
-			Description: "status community description",
+			DisplayName: "movement",
+			Description: "movement community description",
 		},
 	}
 

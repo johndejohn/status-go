@@ -129,7 +129,7 @@ func (n *NimbusStatusNode) activateNodeServices(config *params.NodeConfig, db *l
 
 func (n *NimbusStatusNode) activateStatusService(config *params.NodeConfig) error {
 	if !config.EnableStatusService {
-		n.log.Info("Status service api is disabled")
+		n.log.Info("Movement service api is disabled")
 		return nil
 	}
 

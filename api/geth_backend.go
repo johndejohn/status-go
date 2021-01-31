@@ -91,7 +91,7 @@ type GethStatusBackend struct {
 
 // NewGethStatusBackend create a new GethStatusBackend instance
 func NewGethStatusBackend() *GethStatusBackend {
-	defer log.Info("Status backend initialized", "backend", "geth", "version", params.Version, "commit", params.GitCommit)
+	defer log.Info("Movement backend initialized", "backend", "geth", "version", params.Version, "commit", params.GitCommit)
 
 	statusNode := node.New()
 	accountManager := account.NewGethManager()

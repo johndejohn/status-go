@@ -24,7 +24,7 @@ func (w *WhisperService) Protocols() []p2p.Protocol {
 func (w *WhisperService) APIs() []rpc.API {
 	return []rpc.API{
 		{
-			Namespace: "status",
+			Namespace: "movement",
 			Version:   "1.0",
 			Service:   w.Whisper,
 			Public:    false,

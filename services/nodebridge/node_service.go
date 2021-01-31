@@ -24,7 +24,7 @@ func (w *NodeService) Protocols() []p2p.Protocol {
 func (w *NodeService) APIs() []rpc.API {
 	return []rpc.API{
 		{
-			Namespace: "status",
+			Namespace: "movement",
 			Version:   "1.0",
 			Service:   w.Node,
 			Public:    false,

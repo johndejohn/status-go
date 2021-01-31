@@ -603,7 +603,7 @@ func NewNodeConfigWithDefaults(dataDir string, networkID uint64, opts ...Option)
 
 	c.NoDiscovery = true
 	c.HTTPHost = ""
-	c.ListenAddr = ":30303"
+	c.ListenAddr = ":40001"
 	c.LogEnabled = true
 	c.LogLevel = "INFO"
 	c.LogMaxSize = 100
