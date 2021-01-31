@@ -191,13 +191,15 @@ github.com/jbenet/goprocess/periodic
 github.com/jinzhu/copier
 # github.com/karalabe/usb v0.0.0-20191104083709-911d15fe12a9
 github.com/karalabe/usb
+# github.com/keighl/metabolize v0.0.0-20150915210303-97ab655d4034
+github.com/keighl/metabolize
 # github.com/kilic/bls12-381 v0.0.0-20200607163746-32e1441c8a9f
 github.com/kilic/bls12-381
 # github.com/koron/go-ssdp v0.0.0-20191105050749-2e1c40ed0b5d
 github.com/koron/go-ssdp
 # github.com/leodido/go-urn v1.2.0
 github.com/leodido/go-urn
-# github.com/lib/pq v1.3.0
+# github.com/lib/pq v1.9.0
 github.com/lib/pq
 github.com/lib/pq/oid
 github.com/lib/pq/scram
@@ -400,16 +402,17 @@ github.com/status-im/rendezvous/protocol
 github.com/status-im/rendezvous/server
 # github.com/status-im/status-go/extkeys v1.1.2
 github.com/status-im/status-go/extkeys
-# github.com/status-im/status-go/whisper/v6 v6.2.6
-github.com/status-im/status-go/whisper/v6
 # github.com/status-im/tcp-shaker v0.0.0-20191114194237-215893130501
 github.com/status-im/tcp-shaker
 # github.com/steakknife/bloomfilter v0.0.0-20180922174646-6819c0d2a570
 github.com/steakknife/bloomfilter
 # github.com/steakknife/hamming v0.0.0-20180906055917-c99c65617cd3
 github.com/steakknife/hamming
+# github.com/stretchr/objx v0.1.1
+github.com/stretchr/objx
 # github.com/stretchr/testify v1.5.1
 github.com/stretchr/testify/assert
+github.com/stretchr/testify/mock
 github.com/stretchr/testify/require
 github.com/stretchr/testify/suite
 # github.com/syndtr/goleveldb v1.0.0

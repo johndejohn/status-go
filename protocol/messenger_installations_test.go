@@ -47,7 +47,8 @@ func (s *MessengerInstallationSuite) SetupTest() {
 	s.m = s.newMessenger(s.shh)
 	s.privateKey = s.m.identity
 	// We start the messenger in order to receive installations
-	s.Require().NoError(s.m.Start())
+	_, err := s.m.Start()
+	s.Require().NoError(err)
 }
 
 func (s *MessengerInstallationSuite) TearDownTest() {
@@ -99,7 +100,7 @@ func (s *MessengerInstallationSuite) TestReceiveInstallation() {
 	contactKey, err := crypto.GenerateKey()
 	s.Require().NoError(err)
 
-	contact, err := buildContact(&contactKey.PublicKey)
+	contact, err := buildContactFromPublicKey(&contactKey.PublicKey)
 	s.Require().NoError(err)
 	contact.SystemTags = append(contact.SystemTags, contactAdded)
 	err = s.m.SaveContact(contact)
@@ -141,7 +142,7 @@ func (s *MessengerInstallationSuite) TestSyncInstallation() {
 	contactKey, err := crypto.GenerateKey()
 	s.Require().NoError(err)
 
-	contact, err := buildContact(&contactKey.PublicKey)
+	contact, err := buildContactFromPublicKey(&contactKey.PublicKey)
 	s.Require().NoError(err)
 	contact.SystemTags = append(contact.SystemTags, contactAdded)
 	contact.LocalNickname = "Test Nickname"

@@ -40,7 +40,8 @@ func (s *MessengerContactUpdateSuite) SetupTest() {
 
 	s.m = s.newMessenger(s.shh)
 	s.privateKey = s.m.identity
-	s.Require().NoError(s.m.Start())
+	_, err := s.m.Start()
+	s.Require().NoError(err)
 }
 
 func (s *MessengerContactUpdateSuite) TearDownTest() {
@@ -62,7 +63,8 @@ func (s *MessengerContactUpdateSuite) TestReceiveContactUpdate() {
 	contactID := types.EncodeHex(crypto.FromECDSAPub(&s.m.identity.PublicKey))
 
 	theirMessenger := s.newMessenger(s.shh)
-	s.Require().NoError(theirMessenger.Start())
+	_, err := theirMessenger.Start()
+	s.Require().NoError(err)
 	theirContactID := types.EncodeHex(crypto.FromECDSAPub(&theirMessenger.identity.PublicKey))
 
 	response, err := theirMessenger.SendContactUpdate(context.Background(), contactID, theirName, theirPicture)
@@ -118,4 +120,37 @@ func (s *MessengerContactUpdateSuite) TestReceiveContactUpdate() {
 	s.Require().True(receivedContact.HasBeenAdded())
 	s.Require().NotEmpty(receivedContact.LastUpdated)
 	s.Require().NoError(theirMessenger.Shutdown())
+}
+
+func (s *MessengerContactUpdateSuite) TestAddContact() {
+	contactID := types.EncodeHex(crypto.FromECDSAPub(&s.m.identity.PublicKey))
+
+	theirMessenger := s.newMessenger(s.shh)
+	_, err := theirMessenger.Start()
+	s.Require().NoError(err)
+
+	response, err := theirMessenger.AddContact(context.Background(), contactID)
+	s.Require().NoError(err)
+	s.Require().NotNil(response)
+
+	s.Require().Len(response.Contacts, 1)
+	contact := response.Contacts[0]
+
+	// It adds the profile chat and the one to one chat
+	s.Require().Len(response.Chats, 2)
+
+	// It should add the contact
+	s.Require().True(contact.IsAdded())
+
+	// Wait for the message to reach its destination
+	response, err = WaitOnMessengerResponse(
+		s.m,
+		func(r *MessengerResponse) bool { return len(r.Contacts) > 0 },
+		"contact request not received",
+	)
+	s.Require().NoError(err)
+
+	receivedContact := response.Contacts[0]
+	s.Require().True(receivedContact.HasBeenAdded())
+	s.Require().NotEmpty(receivedContact.LastUpdated)
 }

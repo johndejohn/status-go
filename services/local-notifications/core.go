@@ -78,6 +78,7 @@ type transmitter struct {
 // Service keeps the state of message bus
 type Service struct {
 	started           bool
+	WatchingEnabled   bool
 	transmitter       *transmitter
 	walletTransmitter *transmitter
 	db                *Database
@@ -190,12 +191,12 @@ func (s *Service) SubscribeWallet(publisher *event.Feed) error {
 
 	if err != nil {
 		log.Error("Failed to get wallet preference", "error", err)
-		return nil
+		s.WatchingEnabled = false
+	} else {
+		s.WatchingEnabled = preference.Enabled
 	}
 
-	if preference.Enabled {
-		s.StartWalletWatcher()
-	}
+	s.StartWalletWatcher()
 
 	return nil
 }
@@ -245,7 +246,7 @@ func (s *Service) StartWalletWatcher() {
 							newBlocks = true
 						}
 					}
-					if newBlocks {
+					if newBlocks && s.WatchingEnabled {
 						s.transmitter.publisher.Send(TransactionEvent{
 							Type:                      string(event.Type),
 							BlockNumber:               event.BlockNumber,

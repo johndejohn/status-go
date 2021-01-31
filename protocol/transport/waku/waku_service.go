@@ -67,9 +67,11 @@ type Transport struct {
 	keysManager *wakuServiceKeysManager
 	filters     *transport.FiltersManager
 	logger      *zap.Logger
+	cache       *transport.ProcessedMessageIDsCache
 
 	mailservers      []string
 	envelopesMonitor *EnvelopesMonitor
+	quit             chan struct{}
 }
 
 // NewTransport returns a new Transport.
@@ -103,7 +105,9 @@ func NewTransport(
 	t := &Transport{
 		waku:             waku,
 		api:              api,
+		cache:            transport.NewProcessedMessageIDsCache(db),
 		envelopesMonitor: envelopesMonitor,
+		quit:             make(chan struct{}),
 		keysManager: &wakuServiceKeysManager{
 			waku:              waku,
 			privateKey:        privateKey,
@@ -119,6 +123,8 @@ func NewTransport(
 			return nil, err
 		}
 	}
+
+	t.cleanFiltersLoop()
 
 	return t, nil
 }
@@ -215,11 +221,38 @@ func (a *Transport) RetrieveRawAll() (map[transport.Filter][]*types.Message, err
 
 	allFilters := a.filters.Filters()
 	for _, filter := range allFilters {
-		msgs, err := a.api.GetFilterMessages(filter.FilterID)
-		if err != nil {
+		// Don't pull from filters we don't listen to
+		if !filter.Listen {
 			continue
 		}
-		result[*filter] = append(result[*filter], msgs...)
+		msgs, err := a.api.GetFilterMessages(filter.FilterID)
+		if err != nil {
+			a.logger.Warn("failed to fetch messages", zap.Error(err))
+			continue
+		}
+		if len(msgs) == 0 {
+			continue
+		}
+
+		ids := make([]string, len(msgs))
+		for i := range msgs {
+			id := types.EncodeHex(msgs[i].Hash)
+			ids[i] = id
+		}
+
+		hits, err := a.cache.Hits(ids)
+		if err != nil {
+			a.logger.Error("failed to check messages exists", zap.Error(err))
+			return nil, err
+		}
+
+		for i := range msgs {
+			// Exclude anything that is a cache hit
+			if !hits[types.EncodeHex(msgs[i].Hash)] {
+				result[*filter] = append(result[*filter], msgs[i])
+			}
+		}
+
 	}
 
 	return result, nil
@@ -280,8 +313,24 @@ func (a *Transport) SendPrivateWithPartitioned(ctx context.Context, newMessage *
 	return a.api.Post(ctx, *newMessage)
 }
 
+func (a *Transport) SendPrivateOnPersonalTopic(ctx context.Context, newMessage *types.NewMessage, publicKey *ecdsa.PublicKey) ([]byte, error) {
+	if err := a.addSig(newMessage); err != nil {
+		return nil, err
+	}
+
+	filter, err := a.filters.LoadPersonal(publicKey, a.keysManager.privateKey, false)
+	if err != nil {
+		return nil, err
+	}
+
+	newMessage.Topic = filter.Topic
+	newMessage.PublicKey = crypto.FromECDSAPub(publicKey)
+
+	return a.api.Post(ctx, *newMessage)
+}
+
 func (a *Transport) LoadKeyFilters(key *ecdsa.PrivateKey) (*transport.Filter, error) {
-	return a.filters.LoadPartitioned(&key.PublicKey, key, true)
+	return a.filters.LoadEphemeral(&key.PublicKey, key, true)
 }
 
 func (a *Transport) SendPrivateOnDiscovery(ctx context.Context, newMessage *types.NewMessage, publicKey *ecdsa.PublicKey) ([]byte, error) {
@@ -299,6 +348,10 @@ func (a *Transport) SendPrivateOnDiscovery(ctx context.Context, newMessage *type
 	newMessage.PublicKey = crypto.FromECDSAPub(publicKey)
 
 	return a.api.Post(ctx, *newMessage)
+}
+
+func (a *Transport) cleanFilters() error {
+	return a.filters.RemoveNoListenFilters()
 }
 
 func (a *Transport) addSig(newMessage *types.NewMessage) error {
@@ -326,10 +379,36 @@ func (a *Transport) MaxMessageSize() uint32 {
 }
 
 func (a *Transport) Stop() error {
+	close(a.quit)
 	if a.envelopesMonitor != nil {
 		a.envelopesMonitor.Stop()
 	}
 	return nil
+}
+
+// cleanFiltersLoop cleans up the topic we create for the only purpose
+// of sending messages.
+// Whenever we send a message we also need to listen to that particular topic
+// but in case of asymettric topics, we are not interested in listening to them.
+// We therefore periodically clean them up so we don't receive unnecessary data.
+
+func (a *Transport) cleanFiltersLoop() {
+
+	ticker := time.NewTicker(5 * time.Minute)
+	go func() {
+		for {
+			select {
+			case <-a.quit:
+				ticker.Stop()
+				return
+			case <-ticker.C:
+				err := a.cleanFilters()
+				if err != nil {
+					a.logger.Error("failed to clean up topics", zap.Error(err))
+				}
+			}
+		}
+	}()
 }
 
 // RequestHistoricMessages requests historic messages for all registered filters.
@@ -388,6 +467,17 @@ func (a *Transport) waitForRequestCompleted(ctx context.Context, requestID []byt
 			return nil, ctx.Err()
 		}
 	}
+}
+
+// ConfirmMessagesProcessed marks the messages as processed in the cache so
+// they won't be passed to the next layer anymore
+func (a *Transport) ConfirmMessagesProcessed(ids []string, timestamp uint64) error {
+	return a.cache.Add(ids, timestamp)
+}
+
+// CleanMessagesProcessed clears the messages that are older than timestamp
+func (a *Transport) CleanMessagesProcessed(timestamp uint64) error {
+	return a.cache.Clean(timestamp)
 }
 
 func (a *Transport) SetEnvelopeEventsHandler(handler transport.EnvelopeEventsHandler) error {

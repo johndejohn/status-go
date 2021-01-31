@@ -335,6 +335,22 @@ func (a *Transport) SendPrivateWithPartitioned(ctx context.Context, newMessage *
 	return a.shhAPI.Post(ctx, *newMessage)
 }
 
+func (a *Transport) SendPrivateOnPersonalTopic(ctx context.Context, newMessage *types.NewMessage, publicKey *ecdsa.PublicKey) ([]byte, error) {
+	if err := a.addSig(newMessage); err != nil {
+		return nil, err
+	}
+
+	filter, err := a.filters.LoadPersonal(publicKey, a.keysManager.privateKey, false)
+	if err != nil {
+		return nil, err
+	}
+
+	newMessage.Topic = filter.Topic
+	newMessage.PublicKey = crypto.FromECDSAPub(publicKey)
+
+	return a.shhAPI.Post(ctx, *newMessage)
+}
+
 func (a *Transport) SendPrivateOnDiscovery(ctx context.Context, newMessage *types.NewMessage, publicKey *ecdsa.PublicKey) ([]byte, error) {
 	if err := a.addSig(newMessage); err != nil {
 		return nil, err
@@ -443,6 +459,16 @@ func (a *Transport) waitForRequestCompleted(ctx context.Context, requestID []byt
 			return nil, ctx.Err()
 		}
 	}
+}
+
+// NOTE: currently not used as whisper is not maintained anymore
+func (a *Transport) ConfirmMessagesProcessed(ids []string, timestamp uint64) error {
+	return nil
+}
+
+// NOTE: currently not used as whisper is not maintained anymore
+func (a *Transport) CleanMessagesProcessed(timestamp uint64) error {
+	return nil
 }
 
 func (a *Transport) SetEnvelopeEventsHandler(handler transport.EnvelopeEventsHandler) error {

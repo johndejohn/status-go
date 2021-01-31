@@ -22,6 +22,7 @@ type Transport interface {
 	SendPublic(ctx context.Context, newMessage *types.NewMessage, chatName string) ([]byte, error)
 	SendPrivateWithSharedSecret(ctx context.Context, newMessage *types.NewMessage, publicKey *ecdsa.PublicKey, secret []byte) ([]byte, error)
 	SendPrivateWithPartitioned(ctx context.Context, newMessage *types.NewMessage, publicKey *ecdsa.PublicKey) ([]byte, error)
+	SendPrivateOnPersonalTopic(ctx context.Context, newMessage *types.NewMessage, publicKey *ecdsa.PublicKey) ([]byte, error)
 	SendMessagesRequest(
 		ctx context.Context,
 		peerID []byte,
@@ -41,6 +42,9 @@ type Transport interface {
 	LoadKeyFilters(*ecdsa.PrivateKey) (*Filter, error)
 	ProcessNegotiatedSecret(secret types.NegotiatedSecret) (*Filter, error)
 	RetrieveRawAll() (map[Filter][]*types.Message, error)
+
+	ConfirmMessagesProcessed([]string, uint64) error
+	CleanMessagesProcessed(uint64) error
 
 	SetEnvelopeEventsHandler(handler EnvelopeEventsHandler) error
 }

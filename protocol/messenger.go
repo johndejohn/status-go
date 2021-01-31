@@ -43,6 +43,7 @@ import (
 	wakutransp "github.com/status-im/status-go/protocol/transport/waku"
 	shhtransp "github.com/status-im/status-go/protocol/transport/whisper"
 	v1protocol "github.com/status-im/status-go/protocol/v1"
+	"github.com/status-im/status-go/services/mailservers"
 )
 
 type chatContext string
@@ -60,6 +61,9 @@ const emojiResendMinDelay = 30
 const emojiResendMaxCount = 3
 
 var communityAdvertiseIntervalSecond int64 = 60 * 60
+
+// messageCacheIntervalMs is how long we should keep processed messages in the cache, in ms
+var messageCacheIntervalMs uint64 = 1000 * 60 * 60 * 48
 
 // Messenger is a entity managing chats and messages.
 // It acts as a bridge between the application and encryption
@@ -95,6 +99,7 @@ type Messenger struct {
 	database                   *sql.DB
 	multiAccounts              *multiaccounts.Database
 	account                    *multiaccounts.Account
+	mailserversDatabase        *mailservers.Database
 	quit                       chan struct{}
 
 	mutex sync.Mutex
@@ -295,10 +300,10 @@ func NewMessenger(
 		verifyTransactionClient:    c.verifyTransactionClient,
 		database:                   database,
 		multiAccounts:              c.multiAccount,
+		mailserversDatabase:        c.mailserversDatabase,
 		account:                    c.account,
 		quit:                       make(chan struct{}),
 		shutdownTasks: []func() error{
-			database.Close,
 			pushNotificationClient.Stop,
 			communitiesManager.Stop,
 			encryptionProtocol.Stop,
@@ -308,6 +313,7 @@ func NewMessenger(
 			// Currently this often fails, seems like it's safe to ignore them
 			// https://github.com/uber-go/zap/issues/328
 			func() error { _ = logger.Sync; return nil },
+			database.Close,
 		},
 		logger: logger,
 	}
@@ -389,12 +395,12 @@ func (m *Messenger) resendExpiredEmojiReactions() error {
 	return nil
 }
 
-func (m *Messenger) Start() error {
+func (m *Messenger) Start() (*MessengerResponse, error) {
 	m.logger.Info("starting messenger", zap.String("identity", types.EncodeHex(crypto.FromECDSAPub(&m.identity.PublicKey))))
 	// Start push notification server
 	if m.pushNotificationServer != nil {
 		if err := m.pushNotificationServer.Start(); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
@@ -403,7 +409,7 @@ func (m *Messenger) Start() error {
 		m.handlePushNotificationClientRegistrations(m.pushNotificationClient.SubscribeToRegistrations())
 
 		if err := m.pushNotificationClient.Start(); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
@@ -412,13 +418,13 @@ func (m *Messenger) Start() error {
 
 	subscriptions, err := m.encryptor.Start(m.identity)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// handle stored shared secrets
 	err = m.handleSharedSecrets(subscriptions.SharedSecrets)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	m.handleEncryptionLayerSubscriptions(subscriptions)
@@ -427,7 +433,49 @@ func (m *Messenger) Start() error {
 	m.watchConnectionChange()
 	m.watchExpiredEmojis()
 	m.watchIdentityImageChanges()
-	return nil
+	if err := m.cleanTopics(); err != nil {
+		return nil, err
+	}
+	response := &MessengerResponse{Filters: m.transport.Filters()}
+
+	if m.mailserversDatabase != nil {
+		mailserverTopics, err := m.mailserversDatabase.Topics()
+		if err != nil {
+			return nil, err
+		}
+		response.MailserverTopics = mailserverTopics
+
+		mailserverRanges, err := m.mailserversDatabase.ChatRequestRanges()
+		if err != nil {
+			return nil, err
+		}
+		response.MailserverRanges = mailserverRanges
+
+		mailservers, err := m.mailserversDatabase.Mailservers()
+		if err != nil {
+			return nil, err
+		}
+		response.Mailservers = mailservers
+
+	}
+	return response, nil
+}
+
+// cleanTopics remove any topic that does not have a Listen flag set
+func (m *Messenger) cleanTopics() error {
+	if m.mailserversDatabase == nil {
+		return nil
+	}
+	var filters []*transport.Filter
+	for _, f := range m.transport.Filters() {
+		if f.Listen && !f.Ephemeral {
+			filters = append(filters, f)
+		}
+	}
+
+	m.logger.Debug("keeping topics", zap.Any("filters", filters))
+
+	return m.mailserversDatabase.SetTopics(filters)
 }
 
 // handle connection change is called each time we go from offline/online or viceversa
@@ -438,7 +486,7 @@ func (m *Messenger) handleConnectionChange(online bool) {
 		}
 
 		if m.shouldPublishContactCode {
-			if err := m.handleSendContactCode(); err != nil {
+			if err := m.publishContactCode(); err != nil {
 				m.logger.Error("could not publish on contact code", zap.Error(err))
 				return
 			}
@@ -473,9 +521,9 @@ func (m *Messenger) buildContactCodeAdvertisement() (*protobuf.ContactCodeAdvert
 	}, nil
 }
 
-// handleSendContactCode sends a public message wrapped in the encryption
+// publishContactCode sends a public message wrapped in the encryption
 // layer, which will propagate our bundle
-func (m *Messenger) handleSendContactCode() error {
+func (m *Messenger) publishContactCode() error {
 	var payload []byte
 	m.logger.Debug("sending contact code")
 	contactCodeAdvertisement, err := m.buildContactCodeAdvertisement()
@@ -486,7 +534,7 @@ func (m *Messenger) handleSendContactCode() error {
 	if contactCodeAdvertisement == nil {
 		contactCodeAdvertisement = &protobuf.ContactCodeAdvertisement{}
 	}
-	err = m.handleContactCodeChatIdentity(contactCodeAdvertisement)
+	err = m.attachChatIdentity(contactCodeAdvertisement)
 	if err != nil {
 		return err
 	}
@@ -513,31 +561,33 @@ func (m *Messenger) handleSendContactCode() error {
 
 // contactCodeAdvertisement attaches a protobuf.ChatIdentity to the given protobuf.ContactCodeAdvertisement,
 // if the `shouldPublish` conditions are met
-func (m *Messenger) handleContactCodeChatIdentity(cca *protobuf.ContactCodeAdvertisement) error {
+func (m *Messenger) attachChatIdentity(cca *protobuf.ContactCodeAdvertisement) error {
 	contactCodeTopic := transport.ContactCodeTopic(&m.identity.PublicKey)
 	shouldPublish, err := m.shouldPublishChatIdentity(contactCodeTopic)
 	if err != nil {
 		return err
 	}
 
-	if shouldPublish {
-		cca.ChatIdentity, err = m.createChatIdentity(privateChat)
-		if err != nil {
-			return err
-		}
+	if !shouldPublish {
+		return nil
+	}
 
-		img, err := m.multiAccounts.GetIdentityImage(m.account.KeyUID, userimage.SmallDimName)
-		if err != nil {
-			return err
-		}
-		if img == nil {
-			return errors.New("could not find image")
-		}
+	cca.ChatIdentity, err = m.createChatIdentity(privateChat)
+	if err != nil {
+		return err
+	}
 
-		err = m.persistence.SaveWhenChatIdentityLastPublished(contactCodeTopic, img.Hash())
-		if err != nil {
-			return err
-		}
+	img, err := m.multiAccounts.GetIdentityImage(m.account.KeyUID, userimage.SmallDimName)
+	if err != nil {
+		return err
+	}
+	if img == nil {
+		return errors.New("could not find image")
+	}
+
+	err = m.persistence.SaveWhenChatIdentityLastPublished(contactCodeTopic, img.Hash())
+	if err != nil {
+		return err
 	}
 
 	return nil
@@ -596,6 +646,9 @@ func (m *Messenger) handleStandaloneChatIdentity(chat *Chat) error {
 
 // shouldPublishChatIdentity returns true if the last time the ChatIdentity was attached was more than 24 hours ago
 func (m *Messenger) shouldPublishChatIdentity(chatID string) (bool, error) {
+	if m.account == nil {
+		return false, nil
+	}
 
 	// Check we have at least one image
 	img, err := m.multiAccounts.GetIdentityImage(m.account.KeyUID, userimage.SmallDimName)
@@ -719,8 +772,12 @@ func (m *Messenger) handleEncryptionLayerSubscriptions(subscriptions *encryption
 		for {
 			select {
 			case <-subscriptions.SendContactCode:
-				if err := m.handleSendContactCode(); err != nil {
+				if err := m.publishContactCode(); err != nil {
 					m.logger.Error("failed to publish contact code", zap.Error(err))
+				}
+				// we also piggy-back to clean up cached messages
+				if err := m.transport.CleanMessagesProcessed(m.getTimesource().GetCurrentTime() - messageCacheIntervalMs); err != nil {
+					m.logger.Error("failed to clean processed messages", zap.Error(err))
 				}
 
 			case <-subscriptions.Quit:
@@ -891,7 +948,7 @@ func (m *Messenger) watchIdentityImageChanges() {
 			select {
 			case <-channel:
 				if m.online() {
-					if err := m.handleSendContactCode(); err != nil {
+					if err := m.publishContactCode(); err != nil {
 						m.logger.Error("failed to publish contact code", zap.Error(err))
 					}
 
@@ -913,7 +970,7 @@ func (m *Messenger) handlePushNotificationClientRegistrations(c chan struct{}) {
 			if !more {
 				return
 			}
-			if err := m.handleSendContactCode(); err != nil {
+			if err := m.publishContactCode(); err != nil {
 				m.logger.Error("failed to publish contact code", zap.Error(err))
 			}
 
@@ -1021,8 +1078,12 @@ func (m *Messenger) Init() error {
 
 // Shutdown takes care of ensuring a clean shutdown of Messenger
 func (m *Messenger) Shutdown() (err error) {
-	for _, task := range m.shutdownTasks {
+	close(m.quit)
+
+	for i, task := range m.shutdownTasks {
+		m.logger.Debug("running shutdown task", zap.Int("n", i))
 		if tErr := task(); tErr != nil {
+			m.logger.Info("shutdown task failed", zap.Error(tErr))
 			if err == nil {
 				// First error appeared.
 				err = tErr
@@ -1033,7 +1094,6 @@ func (m *Messenger) Shutdown() (err error) {
 			}
 		}
 	}
-	close(m.quit)
 	return
 }
 
@@ -1216,11 +1276,10 @@ func (m *Messenger) CreateGroupChatWithMembers(ctx context.Context, name string,
 	m.allChats[chat.ID] = &chat
 
 	_, err = m.dispatchMessage(ctx, common.RawMessage{
-		LocalChatID:         chat.ID,
-		Payload:             encodedMessage,
-		MessageType:         protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
-		Recipients:          recipients,
-		ResendAutomatically: true,
+		LocalChatID: chat.ID,
+		Payload:     encodedMessage,
+		MessageType: protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
+		Recipients:  recipients,
 	})
 
 	if err != nil {
@@ -1299,11 +1358,10 @@ func (m *Messenger) RemoveMemberFromGroupChat(ctx context.Context, chatID string
 		return nil, err
 	}
 	_, err = m.dispatchMessage(ctx, common.RawMessage{
-		LocalChatID:         chat.ID,
-		Payload:             encodedMessage,
-		MessageType:         protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
-		Recipients:          oldRecipients,
-		ResendAutomatically: true,
+		LocalChatID: chat.ID,
+		Payload:     encodedMessage,
+		MessageType: protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
+		Recipients:  oldRecipients,
 	})
 	if err != nil {
 		return nil, err
@@ -1388,11 +1446,10 @@ func (m *Messenger) AddMembersToGroupChat(ctx context.Context, chatID string, me
 		return nil, err
 	}
 	_, err = m.dispatchMessage(ctx, common.RawMessage{
-		LocalChatID:         chat.ID,
-		Payload:             encodedMessage,
-		MessageType:         protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
-		Recipients:          recipients,
-		ResendAutomatically: true,
+		LocalChatID: chat.ID,
+		Payload:     encodedMessage,
+		MessageType: protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
+		Recipients:  recipients,
 	})
 
 	if err != nil {
@@ -1453,11 +1510,10 @@ func (m *Messenger) ChangeGroupChatName(ctx context.Context, chatID string, name
 		return nil, err
 	}
 	_, err = m.dispatchMessage(ctx, common.RawMessage{
-		LocalChatID:         chat.ID,
-		Payload:             encodedMessage,
-		MessageType:         protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
-		Recipients:          recipients,
-		ResendAutomatically: true,
+		LocalChatID: chat.ID,
+		Payload:     encodedMessage,
+		MessageType: protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
+		Recipients:  recipients,
 	})
 
 	if err != nil {
@@ -1664,11 +1720,10 @@ func (m *Messenger) AddAdminsToGroupChat(ctx context.Context, chatID string, mem
 		return nil, err
 	}
 	_, err = m.dispatchMessage(ctx, common.RawMessage{
-		LocalChatID:         chat.ID,
-		Payload:             encodedMessage,
-		MessageType:         protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
-		Recipients:          recipients,
-		ResendAutomatically: true,
+		LocalChatID: chat.ID,
+		Payload:     encodedMessage,
+		MessageType: protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
+		Recipients:  recipients,
 	})
 
 	if err != nil {
@@ -1732,11 +1787,10 @@ func (m *Messenger) ConfirmJoiningGroup(ctx context.Context, chatID string) (*Me
 		return nil, err
 	}
 	_, err = m.dispatchMessage(ctx, common.RawMessage{
-		LocalChatID:         chat.ID,
-		Payload:             encodedMessage,
-		MessageType:         protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
-		Recipients:          recipients,
-		ResendAutomatically: true,
+		LocalChatID: chat.ID,
+		Payload:     encodedMessage,
+		MessageType: protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
+		Recipients:  recipients,
 	})
 	if err != nil {
 		return nil, err
@@ -1800,11 +1854,10 @@ func (m *Messenger) LeaveGroupChat(ctx context.Context, chatID string, remove bo
 		return nil, err
 	}
 	_, err = m.dispatchMessage(ctx, common.RawMessage{
-		LocalChatID:         chat.ID,
-		Payload:             encodedMessage,
-		MessageType:         protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
-		Recipients:          recipients,
-		ResendAutomatically: true,
+		LocalChatID: chat.ID,
+		Payload:     encodedMessage,
+		MessageType: protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE,
+		Recipients:  recipients,
 	})
 	if err != nil {
 		return nil, err
@@ -2089,59 +2142,42 @@ func (m *Messenger) DeleteChat(chatID string) error {
 	return nil
 }
 
-func (m *Messenger) isNewContact(contact *Contact) bool {
-	previousContact, ok := m.allContacts[contact.ID]
-	return contact.IsAdded() && (!ok || !previousContact.IsAdded())
+func (m *Messenger) DeactivateChat(chatID string) (*MessengerResponse, error) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	return m.deactivateChat(chatID)
 }
 
-func (m *Messenger) hasNicknameChanged(contact *Contact) bool {
-	previousContact, ok := m.allContacts[contact.ID]
+func (m *Messenger) deactivateChat(chatID string) (*MessengerResponse, error) {
+	var response MessengerResponse
+	chat, ok := m.allChats[chatID]
 	if !ok {
-		return false
+		return nil, ErrChatNotFound
 	}
-	return contact.LocalNickname != previousContact.LocalNickname
-}
 
-func (m *Messenger) removedContact(contact *Contact) bool {
-	previousContact, ok := m.allContacts[contact.ID]
-	if !ok {
-		return false
-	}
-	return previousContact.IsAdded() && !contact.IsAdded()
-}
+	clock, _ := chat.NextClockAndTimestamp(m.getTimesource())
 
-func (m *Messenger) saveContact(contact *Contact) error {
-	name, identicon, err := generateAliasAndIdenticon(contact.ID)
+	err := m.persistence.DeactivateChat(chat, clock)
+
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	contact.Identicon = identicon
-	contact.Alias = name
-
-	if m.isNewContact(contact) || m.hasNicknameChanged(contact) {
-		err := m.syncContact(context.Background(), contact)
+	// We re-register as our options have changed and we don't want to
+	// receive PN from mentions in this chat anymore
+	if chat.Public() {
+		err := m.reregisterForPushNotifications()
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
-	// We check if it should re-register with the push notification server
-	shouldReregisterForPushNotifications := (m.isNewContact(contact) || m.removedContact(contact))
+	m.allChats[chatID] = chat
 
-	err = m.persistence.SaveContact(contact, nil)
-	if err != nil {
-		return err
-	}
+	response.Chats = []*Chat{chat}
+	// TODO: Remove filters
 
-	m.allContacts[contact.ID] = contact
-
-	// Reregister only when data has changed
-	if shouldReregisterForPushNotifications {
-		return m.reregisterForPushNotifications()
-	}
-
-	return nil
+	return &response, nil
 }
 
 func (m *Messenger) reregisterForPushNotifications() error {
@@ -2151,55 +2187,6 @@ func (m *Messenger) reregisterForPushNotifications() error {
 	}
 
 	return m.pushNotificationClient.Reregister(m.pushNotificationOptions())
-}
-
-func (m *Messenger) SaveContact(contact *Contact) error {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	return m.saveContact(contact)
-}
-
-func (m *Messenger) BlockContact(contact *Contact) ([]*Chat, error) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	chats, err := m.persistence.BlockContact(contact)
-	if err != nil {
-		return nil, err
-	}
-
-	m.allContacts[contact.ID] = contact
-	for _, chat := range chats {
-		m.allChats[chat.ID] = chat
-	}
-	delete(m.allChats, contact.ID)
-
-	// re-register for push notifications
-	err = m.reregisterForPushNotifications()
-	if err != nil {
-		return nil, err
-	}
-
-	return chats, nil
-}
-
-func (m *Messenger) Contacts() []*Contact {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	var contacts []*Contact
-	for _, contact := range m.allContacts {
-		if contact.HasCustomFields() {
-			contacts = append(contacts, contact)
-		}
-	}
-	return contacts
-}
-
-// GetContactByID assumes pubKey includes 0x prefix
-func (m *Messenger) GetContactByID(pubKey string) *Contact {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	return m.allContacts[pubKey]
 }
 
 // pull a message from the database and send it again
@@ -2332,8 +2319,10 @@ func (m *Messenger) dispatchMessage(ctx context.Context, spec common.RawMessage)
 	case ChatTypePrivateGroupChat:
 		logger.Debug("sending group message", zap.String("chatName", chat.Name))
 		if spec.Recipients == nil {
-			// Chat messages are only dispatched to users who joined
-			if spec.MessageType == protobuf.ApplicationMetadataMessage_CHAT_MESSAGE {
+			// Anything that is not a membership update message is only dispatched to joined users
+			// NOTE: I think here it might make sense to always invite to joined users apart from the
+			// initial message
+			if spec.MessageType != protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE {
 				spec.Recipients, err = chat.JoinedMembersAsPublicKeys()
 				if err != nil {
 					return nil, err
@@ -2346,6 +2335,7 @@ func (m *Messenger) dispatchMessage(ctx context.Context, spec common.RawMessage)
 				}
 			}
 		}
+
 		hasPairedDevices := m.hasPairedDevices()
 
 		if !hasPairedDevices {
@@ -2360,8 +2350,10 @@ func (m *Messenger) dispatchMessage(ctx context.Context, spec common.RawMessage)
 			spec.Recipients = spec.Recipients[:n]
 		}
 
-		spec.MessageType = protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE
-		// We always wrap in group information
+		// We skip wrapping in some cases (emoji reactions for example)
+		if !spec.SkipGroupMessageWrap {
+			spec.MessageType = protobuf.ApplicationMetadataMessage_MEMBERSHIP_UPDATE_MESSAGE
+		}
 		id, err = m.processor.SendGroup(ctx, spec.Recipients, spec)
 		if err != nil {
 			return nil, err
@@ -2529,106 +2521,6 @@ func (m *Messenger) sendChatMessage(ctx context.Context, message *common.Message
 
 	response.Chats = []*Chat{chat}
 	return &response, m.saveChat(chat)
-}
-
-// Send contact updates to all contacts added by us
-func (m *Messenger) SendContactUpdates(ctx context.Context, ensName, profileImage string) error {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	myID := contactIDFromPublicKey(&m.identity.PublicKey)
-
-	if _, err := m.sendContactUpdate(ctx, myID, ensName, profileImage); err != nil {
-		return err
-	}
-
-	// TODO: This should not be sending paired messages, as we do it above
-	for _, contact := range m.allContacts {
-		if contact.IsAdded() {
-			if _, err := m.sendContactUpdate(ctx, contact.ID, ensName, profileImage); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// NOTE: this endpoint does not add the contact, the reason being is that currently
-// that's left as a responsibility to the client, which will call both `SendContactUpdate`
-// and `SaveContact` with the correct system tag.
-// Ideally we have a single endpoint that does both, but probably best to bring `ENS` name
-// on the messenger first.
-
-// SendContactUpdate sends a contact update to a user and adds the user to contacts
-func (m *Messenger) SendContactUpdate(ctx context.Context, chatID, ensName, profileImage string) (*MessengerResponse, error) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	return m.sendContactUpdate(ctx, chatID, ensName, profileImage)
-}
-
-func (m *Messenger) sendContactUpdate(ctx context.Context, chatID, ensName, profileImage string) (*MessengerResponse, error) {
-	var response MessengerResponse
-
-	contact, ok := m.allContacts[chatID]
-	if !ok {
-		pubkeyBytes, err := types.DecodeHex(chatID)
-		if err != nil {
-			return nil, err
-		}
-
-		publicKey, err := crypto.UnmarshalPubkey(pubkeyBytes)
-		if err != nil {
-			return nil, err
-		}
-
-		contact, err = buildContact(publicKey)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	chat, ok := m.allChats[chatID]
-	if !ok {
-		publicKey, err := contact.PublicKey()
-		if err != nil {
-			return nil, err
-		}
-		chat = OneToOneFromPublicKey(publicKey, m.getTimesource())
-		// We don't want to show the chat to the user
-		chat.Active = false
-	}
-
-	m.allChats[chat.ID] = chat
-	clock, _ := chat.NextClockAndTimestamp(m.getTimesource())
-
-	contactUpdate := &protobuf.ContactUpdate{
-		Clock:        clock,
-		EnsName:      ensName,
-		ProfileImage: profileImage}
-	encodedMessage, err := proto.Marshal(contactUpdate)
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = m.dispatchMessage(ctx, common.RawMessage{
-		LocalChatID:         chatID,
-		Payload:             encodedMessage,
-		MessageType:         protobuf.ApplicationMetadataMessage_CONTACT_UPDATE,
-		ResendAutomatically: true,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	response.Contacts = []*Contact{contact}
-	response.Chats = []*Chat{chat}
-
-	chat.LastClockValue = clock
-	err = m.saveChat(chat)
-	if err != nil {
-		return nil, err
-	}
-	return &response, m.saveContact(contact)
 }
 
 // SyncDevices sends all public chats and contacts to paired devices
@@ -2882,7 +2774,10 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 
 	logger := m.logger.With(zap.String("site", "RetrieveAll"))
 	for _, messages := range chatWithMessages {
+		var processedMessages []string
 		for _, shhMessage := range messages {
+			// Indicates tha all messages in the batch have been processed correctly
+			allMessagesProcessed := true
 			statusMessages, err := m.processor.HandleMessages(shhMessage, true)
 			if err != nil {
 				logger.Info("failed to decode messages", zap.Error(err))
@@ -2921,9 +2816,10 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 				if c, ok := messageState.AllContacts[senderID]; ok {
 					contact = c
 				} else {
-					c, err := buildContact(publicKey)
+					c, err := buildContact(senderID, publicKey)
 					if err != nil {
 						logger.Info("failed to build contact", zap.Error(err))
+						allMessagesProcessed = false
 						continue
 					}
 					contact = c
@@ -2948,6 +2844,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleMembershipUpdate(messageState, messageState.AllChats[rawMembershipUpdate.ChatId], rawMembershipUpdate, m.systemMessagesTranslations)
 						if err != nil {
 							logger.Warn("failed to handle MembershipUpdate", zap.Error(err))
+							allMessagesProcessed = false
 							continue
 						}
 
@@ -2957,6 +2854,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleChatMessage(messageState)
 						if err != nil {
 							logger.Warn("failed to handle ChatMessage", zap.Error(err))
+							allMessagesProcessed = false
 							continue
 						}
 
@@ -2970,6 +2868,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandlePairInstallation(messageState, p)
 						if err != nil {
 							logger.Warn("failed to handle PairInstallation", zap.Error(err))
+							allMessagesProcessed = false
 							continue
 						}
 
@@ -2984,6 +2883,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleSyncInstallationContact(messageState, p)
 						if err != nil {
 							logger.Warn("failed to handle SyncInstallationContact", zap.Error(err))
+							allMessagesProcessed = false
 							continue
 						}
 
@@ -3003,6 +2903,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 							err := m.reregisterForPushNotifications()
 							if err != nil {
 
+								allMessagesProcessed = false
 								logger.Warn("could not re-register for push notifications", zap.Error(err))
 								continue
 							}
@@ -3014,6 +2915,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleRequestAddressForTransaction(messageState, command)
 						if err != nil {
 							logger.Warn("failed to handle RequestAddressForTransaction", zap.Error(err))
+							allMessagesProcessed = false
 							continue
 						}
 
@@ -3023,6 +2925,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleSendTransaction(messageState, command)
 						if err != nil {
 							logger.Warn("failed to handle SendTransaction", zap.Error(err))
+							allMessagesProcessed = false
 							continue
 						}
 
@@ -3032,6 +2935,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleAcceptRequestAddressForTransaction(messageState, command)
 						if err != nil {
 							logger.Warn("failed to handle AcceptRequestAddressForTransaction", zap.Error(err))
+							allMessagesProcessed = false
 							continue
 						}
 
@@ -3041,6 +2945,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleDeclineRequestAddressForTransaction(messageState, command)
 						if err != nil {
 							logger.Warn("failed to handle DeclineRequestAddressForTransaction", zap.Error(err))
+							allMessagesProcessed = false
 							continue
 						}
 
@@ -3050,6 +2955,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleDeclineRequestTransaction(messageState, command)
 						if err != nil {
 							logger.Warn("failed to handle DeclineRequestTransaction", zap.Error(err))
+							allMessagesProcessed = false
 							continue
 						}
 
@@ -3059,6 +2965,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleRequestTransaction(messageState, command)
 						if err != nil {
 							logger.Warn("failed to handle RequestTransaction", zap.Error(err))
+							allMessagesProcessed = false
 							continue
 						}
 
@@ -3068,6 +2975,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleContactUpdate(messageState, contactUpdate)
 						if err != nil {
 							logger.Warn("failed to handle ContactUpdate", zap.Error(err))
+							allMessagesProcessed = false
 							continue
 						}
 					case protobuf.PushNotificationQuery:
@@ -3077,6 +2985,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						}
 						logger.Debug("Handling PushNotificationQuery")
 						if err := m.pushNotificationServer.HandlePushNotificationQuery(publicKey, msg.ID, msg.ParsedMessage.Interface().(protobuf.PushNotificationQuery)); err != nil {
+							allMessagesProcessed = false
 							logger.Warn("failed to handle PushNotificationQuery", zap.Error(err))
 						}
 						// We continue in any case, no changes to messenger
@@ -3088,6 +2997,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						}
 						logger.Debug("Handling PushNotificationRegistrationResponse")
 						if err := m.pushNotificationClient.HandlePushNotificationRegistrationResponse(publicKey, msg.ParsedMessage.Interface().(protobuf.PushNotificationRegistrationResponse)); err != nil {
+							allMessagesProcessed = false
 							logger.Warn("failed to handle PushNotificationRegistrationResponse", zap.Error(err))
 						}
 						// We continue in any case, no changes to messenger
@@ -3101,6 +3011,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 							logger.Debug("Received ContactCodeAdvertisement ChatIdentity")
 							err = m.handler.HandleChatIdentity(messageState, *cca.ChatIdentity)
 							if err != nil {
+								allMessagesProcessed = false
 								logger.Warn("failed to handle ContactCodeAdvertisement ChatIdentity", zap.Error(err))
 								// No continue as Chat Identity may fail but the rest of the cca may process fine.
 							}
@@ -3111,6 +3022,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						}
 						logger.Debug("Handling ContactCodeAdvertisement")
 						if err := m.pushNotificationClient.HandleContactCodeAdvertisement(publicKey, cca); err != nil {
+							allMessagesProcessed = false
 							logger.Warn("failed to handle ContactCodeAdvertisement", zap.Error(err))
 						}
 
@@ -3124,6 +3036,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						}
 						logger.Debug("Handling PushNotificationResponse")
 						if err := m.pushNotificationClient.HandlePushNotificationResponse(publicKey, msg.ParsedMessage.Interface().(protobuf.PushNotificationResponse)); err != nil {
+							allMessagesProcessed = false
 							logger.Warn("failed to handle PushNotificationResponse", zap.Error(err))
 						}
 						// We continue in any case, no changes to messenger
@@ -3136,6 +3049,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						}
 						logger.Debug("Handling PushNotificationQueryResponse")
 						if err := m.pushNotificationClient.HandlePushNotificationQueryResponse(publicKey, msg.ParsedMessage.Interface().(protobuf.PushNotificationQueryResponse)); err != nil {
+							allMessagesProcessed = false
 							logger.Warn("failed to handle PushNotificationQueryResponse", zap.Error(err))
 						}
 						// We continue in any case, no changes to messenger
@@ -3148,6 +3062,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						}
 						logger.Debug("Handling PushNotificationRequest")
 						if err := m.pushNotificationServer.HandlePushNotificationRequest(publicKey, msg.ID, msg.ParsedMessage.Interface().(protobuf.PushNotificationRequest)); err != nil {
+							allMessagesProcessed = false
 							logger.Warn("failed to handle PushNotificationRequest", zap.Error(err))
 						}
 						// We continue in any case, no changes to messenger
@@ -3157,6 +3072,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleEmojiReaction(messageState, msg.ParsedMessage.Interface().(protobuf.EmojiReaction))
 						if err != nil {
 							logger.Warn("failed to handle EmojiReaction", zap.Error(err))
+							allMessagesProcessed = false
 							continue
 						}
 					case protobuf.GroupChatInvitation:
@@ -3164,6 +3080,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleGroupChatInvitation(messageState, msg.ParsedMessage.Interface().(protobuf.GroupChatInvitation))
 						if err != nil {
 							logger.Warn("failed to handle GroupChatInvitation", zap.Error(err))
+							allMessagesProcessed = false
 							continue
 						}
 					case protobuf.ChatIdentity:
@@ -3171,6 +3088,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleChatIdentity(messageState, msg.ParsedMessage.Interface().(protobuf.ChatIdentity))
 						if err != nil {
 							logger.Warn("failed to handle ChatIdentity", zap.Error(err))
+							allMessagesProcessed = false
 							continue
 						}
 
@@ -3179,6 +3097,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleCommunityDescription(messageState, publicKey, msg.ParsedMessage.Interface().(protobuf.CommunityDescription), msg.DecryptedPayload)
 						if err != nil {
 							logger.Warn("failed to handle CommunityDescription", zap.Error(err))
+							allMessagesProcessed = false
 							continue
 						}
 					case protobuf.CommunityInvitation:
@@ -3187,6 +3106,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.handler.HandleCommunityInvitation(messageState, publicKey, invitation, invitation.CommunityDescription)
 						if err != nil {
 							logger.Warn("failed to handle CommunityDescription", zap.Error(err))
+							allMessagesProcessed = false
 							continue
 						}
 					default:
@@ -3198,6 +3118,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 							}
 							logger.Debug("Handling PushNotificationRegistration")
 							if err := m.pushNotificationServer.HandlePushNotificationRegistration(publicKey, msg.ParsedMessage.Interface().([]byte)); err != nil {
+								allMessagesProcessed = false
 								logger.Warn("failed to handle PushNotificationRegistration", zap.Error(err))
 							}
 							// We continue in any case, no changes to messenger
@@ -3210,6 +3131,16 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 				} else {
 					logger.Debug("parsed message is nil")
 				}
+			}
+
+			if allMessagesProcessed {
+				processedMessages = append(processedMessages, types.EncodeHex(shhMessage.Hash))
+			}
+		}
+
+		if len(processedMessages) != 0 {
+			if err := m.transport.ConfirmMessagesProcessed(processedMessages, m.getTimesource().GetCurrentTime()); err != nil {
+				logger.Warn("failed to confirm processed messages", zap.Error(err))
 			}
 		}
 	}
@@ -3361,7 +3292,11 @@ func (m *Messenger) MessageByChatID(chatID, cursor string, limit int) ([]*common
 
 	if chat.Timeline() {
 		var chatIDs = []string{"@" + contactIDFromPublicKey(&m.identity.PublicKey)}
-		for _, contact := range m.allContacts {
+		contacts, err := m.persistence.Contacts()
+		if err != nil {
+			return nil, "", err
+		}
+		for _, contact := range contacts {
 			if contact.IsAdded() {
 				chatIDs = append(chatIDs, "@"+contact.ID)
 			}
@@ -3381,6 +3316,32 @@ func (m *Messenger) DeleteMessage(id string) error {
 
 func (m *Messenger) DeleteMessagesByChatID(id string) error {
 	return m.persistence.DeleteMessagesByChatID(id)
+}
+
+func (m *Messenger) ClearHistory(id string) (*MessengerResponse, error) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	return m.clearHistory(id)
+
+}
+
+func (m *Messenger) clearHistory(id string) (*MessengerResponse, error) {
+	chat, ok := m.allChats[id]
+	if !ok {
+		return nil, ErrChatNotFound
+	}
+
+	clock, _ := chat.NextClockAndTimestamp(m.transport)
+
+	err := m.persistence.ClearHistory(chat, clock)
+	if err != nil {
+		return nil, err
+	}
+
+	m.allChats[id] = chat
+
+	response := &MessengerResponse{Chats: []*Chat{chat}}
+	return response, nil
 }
 
 // MarkMessagesSeen marks messages with `ids` as seen in the chat `chatID`.
@@ -4486,9 +4447,10 @@ func (m *Messenger) SendEmojiReaction(ctx context.Context, chatID, messageID str
 	}
 
 	_, err = m.dispatchMessage(ctx, common.RawMessage{
-		LocalChatID: chatID,
-		Payload:     encodedMessage,
-		MessageType: protobuf.ApplicationMetadataMessage_EMOJI_REACTION,
+		LocalChatID:          chatID,
+		Payload:              encodedMessage,
+		SkipGroupMessageWrap: true,
+		MessageType:          protobuf.ApplicationMetadataMessage_EMOJI_REACTION,
 		// Don't resend using datasync, that would create quite a lot
 		// of traffic if clicking too eagelry
 		ResendAutomatically: false,
@@ -4563,9 +4525,10 @@ func (m *Messenger) SendEmojiReactionRetraction(ctx context.Context, emojiReacti
 
 	// Send the marshalled EmojiReactionRetraction protobuf
 	_, err = m.dispatchMessage(ctx, common.RawMessage{
-		LocalChatID: emojiR.GetChatId(),
-		Payload:     encodedMessage,
-		MessageType: protobuf.ApplicationMetadataMessage_EMOJI_REACTION,
+		LocalChatID:          emojiR.GetChatId(),
+		Payload:              encodedMessage,
+		SkipGroupMessageWrap: true,
+		MessageType:          protobuf.ApplicationMetadataMessage_EMOJI_REACTION,
 		// Don't resend using datasync, that would create quite a lot
 		// of traffic if clicking too eagelry
 		ResendAutomatically: false,
@@ -4620,15 +4583,22 @@ func (m *Messenger) encodeChatEntity(chat *Chat, message common.ChatEntity) ([]b
 	case ChatTypePrivateGroupChat:
 		message.SetMessageType(protobuf.MessageType_PRIVATE_GROUP)
 		l.Debug("sending group message", zap.String("chatName", chat.Name))
+		if !message.WrapGroupMessage() {
+			encodedMessage, err = proto.Marshal(message.GetProtobuf())
+			if err != nil {
+				return nil, err
+			}
+		} else {
 
-		group, err := newProtocolGroupFromChat(chat)
-		if err != nil {
-			return nil, err
-		}
+			group, err := newProtocolGroupFromChat(chat)
+			if err != nil {
+				return nil, err
+			}
 
-		encodedMessage, err = m.processor.EncodeMembershipUpdate(group, message)
-		if err != nil {
-			return nil, err
+			encodedMessage, err = m.processor.EncodeAbridgedMembershipUpdate(group, message)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 	default:

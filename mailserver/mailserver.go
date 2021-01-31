@@ -37,7 +37,7 @@ import (
 	"github.com/status-im/status-go/params"
 	"github.com/status-im/status-go/waku"
 	wakucommon "github.com/status-im/status-go/waku/common"
-	"github.com/status-im/status-go/whisper/v6"
+	"github.com/status-im/status-go/whisper"
 )
 
 const (
@@ -958,6 +958,7 @@ func (s *mailServer) createIterator(req MessagesRequestPayload) (Iterator, error
 		start:  kl.Bytes(),
 		end:    ku.Bytes(),
 		cursor: req.Cursor,
+		topics: req.Topics,
 		bloom:  req.Bloom,
 		limit:  req.Limit,
 	}
