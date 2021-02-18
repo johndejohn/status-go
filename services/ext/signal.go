@@ -48,3 +48,11 @@ func (h PublisherSignalHandler) FilterAdded(filters []*signal.Filter) {
 func (h PublisherSignalHandler) NewMessages(response *protocol.MessengerResponse) {
 	signal.SendNewMessages(response)
 }
+
+// MessengerSignalHandler sends signals on messenger events
+type MessengerSignalsHandler struct{}
+
+// MessageDelivered passes information that message acknowledged by datasync
+func (m MessengerSignalsHandler) MessageDelivered(chatID string, messageID string) {
+	signal.SendMessageDelivered(chatID, messageID)
+}
