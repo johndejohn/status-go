@@ -14,9 +14,7 @@ import (
 	"github.com/status-im/status-go/services/mailservers"
 )
 
-type MessengerSignalsHandler interface {
-	MessageDelivered(string, string)
-}
+type MessengerSignalsHandler func(string, string)
 
 type config struct {
 	// This needs to be exposed until we move here mailserver logic

@@ -2779,7 +2779,7 @@ func (m *Messenger) markDeliveredMessages(acks [][]byte) {
 				m.logger.Debug("Can't get message from database", zap.Error(err))
 				continue
 			}
-			m.config.messengerSignalsHandler.MessageDelivered(message.LocalChatID, messageID)
+			m.config.messengerSignalsHandler(message.LocalChatID, messageID)
 		}
 	}
 }

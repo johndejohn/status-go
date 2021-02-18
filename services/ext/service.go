@@ -153,7 +153,7 @@ func (s *Service) InitProtocol(identity *ecdsa.PrivateKey, db *sql.DB, multiAcco
 	s.multiAccountsDB = multiAccountDb
 	s.account = acc
 
-	options, err := buildMessengerOptions(s.config, identity, db, s.multiAccountsDB, acc, envelopesMonitorConfig, s.accountsDB, logger, &MessengerSignalsHandler{})
+	options, err := buildMessengerOptions(s.config, identity, db, s.multiAccountsDB, acc, envelopesMonitorConfig, s.accountsDB, logger, signal.SendMessageDelivered)
 	if err != nil {
 		return err
 	}
