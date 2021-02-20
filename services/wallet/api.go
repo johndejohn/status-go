@@ -50,7 +50,8 @@ func (api *API) GetTransfersByAddress(ctx context.Context, address common.Addres
 			return nil, err
 		}
 
-		if block == nil {
+		// if zero block was already checked there is nothing to find more
+		if block == nil || big.NewInt(0).Cmp(block) == 0 {
 			return castToTransferViews(rst), nil
 		}
 
@@ -180,6 +181,23 @@ func (api *API) GetFavourites(ctx context.Context) ([]*Favourite, error) {
 func (api *API) AddFavourite(ctx context.Context, favourite Favourite) error {
 	log.Debug("call to create or update favourites")
 	err := api.s.db.AddFavourite(favourite)
-	log.Debug("result from database for create or update favouritesn", "err", err)
+	log.Debug("result from database for create or update favourites", "err", err)
 	return err
+}
+
+func (api *API) GetCryptoOnRamps(ctx context.Context) ([]CryptoOnRamp, error) {
+	if api.s.cryptoOnRampManager == nil {
+		// TODO Add settings and then build options based on settings
+		opts := &CryptoOnRampOptions{
+			dataSourceType: DataSourceStatic,
+		}
+		api.s.cryptoOnRampManager = NewCryptoOnRampManager(opts)
+	}
+
+	rs, err := api.s.cryptoOnRampManager.Get()
+	if err != nil {
+		return nil, err
+	}
+
+	return rs, nil
 }

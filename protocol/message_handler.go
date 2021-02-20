@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"encoding/hex"
 	"fmt"
+	"strings"
 
 	"github.com/pkg/errors"
 
@@ -423,6 +424,12 @@ func (m *MessageHandler) HandleChatMessage(state *ReceivedMessageState) error {
 		return err // matchChatEntity returns a descriptive error message
 	}
 
+	// It looks like status-react created profile chats as public chats
+	// so for now we need to check for the presence of "@" in their chatID
+	if chat.Public() && receivedMessage.ContentType == protobuf.ChatMessage_IMAGE && !strings.HasPrefix(chat.ID, "@") {
+		return errors.New("images are not allowed in public chats")
+	}
+
 	// If profile updates check if author is the same as chat profile public key
 	if chat.ProfileUpdates() && receivedMessage.From != chat.Profile {
 		return nil
@@ -482,6 +489,16 @@ func (m *MessageHandler) HandleChatMessage(state *ReceivedMessageState) error {
 	}
 	// Add to response
 	state.Response.Messages = append(state.Response.Messages, receivedMessage)
+
+	// Create notification body to be eventually passed to `localnotifications.SendMessageNotifications()`
+	state.Response.Notifications = append(
+		state.Response.Notifications,
+		MessageNotificationBody{
+			Message: receivedMessage,
+			Contact: contact,
+			Chat:    chat,
+		},
+	)
 
 	return nil
 }

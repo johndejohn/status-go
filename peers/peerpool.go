@@ -103,6 +103,7 @@ type PeerPool struct {
 	cache  *Cache
 
 	mu                 sync.RWMutex
+	timeoutMu          sync.RWMutex
 	topics             []TopicPoolInterface
 	serverSubscription event.Subscription
 	events             chan *p2p.PeerEvent
@@ -123,6 +124,8 @@ func NewPeerPool(discovery discovery.Discovery, config map[discv5.Topic]params.L
 }
 
 func (p *PeerPool) setDiscoveryTimeout() {
+	p.timeoutMu.Lock()
+	defer p.timeoutMu.Unlock()
 	if p.opts.AllowStop && p.opts.DiscServerTimeout > 0 {
 		p.timeout = time.After(p.opts.DiscServerTimeout)
 	}
@@ -217,9 +220,9 @@ func (p *PeerPool) stopDiscovery(server *p2p.Server) {
 		t.StopSearch(server)
 	}
 
-	p.mu.Lock()
+	p.timeoutMu.Lock()
 	p.timeout = nil
-	p.mu.Unlock()
+	p.timeoutMu.Unlock()
 
 	signal.SendDiscoveryStopped()
 }
@@ -275,9 +278,15 @@ func (p *PeerPool) handleServerPeers(server *p2p.Server, events <-chan *p2p.Peer
 	}
 
 	for {
-		p.mu.RLock()
+		// We use a separate lock for timeout, as this loop should
+		// always be running, otherwise the p2p.Server will hang.
+		// Because the handler of events might potentially hang on the
+		// server, deadlocking if this loop is waiting for the global lock.
+		// NOTE: this code probably needs to be refactored and simplified
+		// as it's difficult to follow the asynchronous nature of it.
+		p.timeoutMu.RLock()
 		timeout := p.timeout
-		p.mu.RUnlock()
+		p.timeoutMu.RUnlock()
 
 		select {
 		case <-p.quit:
@@ -313,20 +322,31 @@ func (p *PeerPool) handlePeerEventType(server *p2p.Server, event *p2p.PeerEvent,
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	var shouldRetry bool
+	var shouldStop bool
 	switch event.Type {
 	case p2p.PeerEventTypeDrop:
 		log.Debug("confirm peer dropped", "ID", event.Peer)
 		if p.handleDroppedPeer(server, event.Peer) {
-			queueRetry(immediately)
+			shouldRetry = true
 		}
 	case p2p.PeerEventTypeAdd: // skip other events
 		log.Debug("confirm peer added", "ID", event.Peer)
 		p.handleAddedPeer(server, event.Peer)
-		queueStop()
+		shouldStop = true
 	default:
 		return
 	}
+
+	// First we send the discovery summary
 	SendDiscoverySummary(server.PeersInfo())
+
+	// then we send the stop event
+	if shouldRetry {
+		queueRetry(immediately)
+	} else if shouldStop {
+		queueStop()
+	}
 }
 
 // handleAddedPeer notifies all topics about added peer.

@@ -628,6 +628,13 @@ func (b *GethStatusBackend) startNode(config *params.NodeConfig) (err error) {
 	}); err != nil {
 		return
 	}
+	if config.WalletConfig.Enabled {
+		walletService, err := b.statusNode.WalletService()
+		if err != nil {
+			return err
+		}
+		walletService.SetClient(b.statusNode.RPCClient().Ethclient())
+	}
 	signal.SendNodeStarted()
 
 	b.transactor.SetNetworkID(config.NetworkID)
@@ -1252,6 +1259,11 @@ func (b *GethStatusBackend) startWallet(watchNewBlocks bool) error {
 			uniqAddressesMap[address] = struct{}{}
 			allAddresses = append(allAddresses, address)
 		}
+	}
+
+	err = wallet.MergeBlocksRanges(allAddresses, b.statusNode.Config().NetworkID)
+	if err != nil {
+		return err
 	}
 
 	return wallet.StartReactor(

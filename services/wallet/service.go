@@ -29,12 +29,13 @@ func NewService(db *Database, accountsFeed *event.Feed) *Service {
 
 // Service is a wallet service.
 type Service struct {
-	feed    *event.Feed
-	db      *Database
-	reactor *Reactor
-	signals *SignalsTransmitter
-	client  *ethclient.Client
-	started bool
+	feed                *event.Feed
+	db                  *Database
+	reactor             *Reactor
+	signals             *SignalsTransmitter
+	client              *ethclient.Client
+	cryptoOnRampManager *CryptoOnRampManager
+	started             bool
 
 	group        *Group
 	accountsFeed *event.Feed
@@ -49,6 +50,23 @@ func (s *Service) Start(*p2p.Server) error {
 // GetFeed returns signals feed.
 func (s *Service) GetFeed() *event.Feed {
 	return s.feed
+}
+
+// SetClient sets ethclient
+func (s *Service) SetClient(client *ethclient.Client) {
+	s.client = client
+}
+
+// MergeBlocksRanges merge old blocks ranges if possible
+func (s *Service) MergeBlocksRanges(accounts []common.Address, chain uint64) error {
+	for _, account := range accounts {
+		err := s.db.mergeRanges(account, chain)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // StartReactor separately because it requires known ethereum address, which will become available only after login.
