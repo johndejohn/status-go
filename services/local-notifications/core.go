@@ -17,7 +17,6 @@ import (
 	"github.com/status-im/status-go/multiaccounts/accounts"
 	"github.com/status-im/status-go/protocol"
 	"github.com/status-im/status-go/services/wallet"
-	"github.com/status-im/status-go/signal"
 )
 
 type PushCategory string
@@ -221,7 +220,7 @@ func pushMessages(ns []*Notification) {
 
 func pushMessage(notification *Notification) {
 	log.Info("Pushing a new push notification", "info", notification)
-	signal.SendLocalNotifications(notification)
+	//signal.SendLocalNotifications(notification)
 }
 
 func (s *Service) buildTransactionNotification(rawTransfer wallet.Transfer) *Notification {
