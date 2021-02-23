@@ -825,7 +825,7 @@ func (m *Messenger) publishOrgInvitation(org *communities.Community, invitation 
 		SkipEncryption: true,
 		MessageType:    protobuf.ApplicationMetadataMessage_COMMUNITY_INVITATION,
 	}
-	_, err = m.processor.SendPrivate(context.Background(), pk, rawMessage)
+	_, err = m.processor.SendPrivate(context.Background(), pk, &rawMessage)
 	return err
 }
 
@@ -1583,7 +1583,7 @@ func (m *Messenger) SendGroupChatInvitationRequest(ctx context.Context, chatID s
 		return nil, err
 	}
 
-	id, err := m.processor.SendPrivate(ctx, adminpk, spec)
+	id, err := m.processor.SendPrivate(ctx, adminpk, &spec)
 	if err != nil {
 		return nil, err
 	}
@@ -1654,7 +1654,7 @@ func (m *Messenger) SendGroupChatInvitationRejection(ctx context.Context, invita
 		return nil, err
 	}
 
-	id, err := m.processor.SendPrivate(ctx, userpk, spec)
+	id, err := m.processor.SendPrivate(ctx, userpk, &spec)
 	if err != nil {
 		return nil, err
 	}
@@ -2235,7 +2235,7 @@ func (m *Messenger) sendToPairedDevices(ctx context.Context, spec common.RawMess
 	hasPairedDevices := m.hasPairedDevices()
 	// We send a message to any paired device
 	if hasPairedDevices {
-		_, err := m.processor.SendPrivate(ctx, &m.identity.PublicKey, spec)
+		_, err := m.processor.SendPrivate(ctx, &m.identity.PublicKey, &spec)
 		if err != nil {
 			return err
 		}
@@ -2277,15 +2277,19 @@ func (m *Messenger) dispatchMessage(ctx context.Context, spec common.RawMessage)
 		if err != nil {
 			return nil, err
 		}
+
+		//SendPrivate will alter message identity and possibly datasyncid, so we save an unchanged
+		//message for sending to paired devices later
+		specCopyForPairedDevices := spec
 		if !common.IsPubKeyEqual(publicKey, &m.identity.PublicKey) {
-			id, err = m.processor.SendPrivate(ctx, publicKey, spec)
+			id, err = m.processor.SendPrivate(ctx, publicKey, &spec)
 
 			if err != nil {
 				return nil, err
 			}
 		}
 
-		err = m.sendToPairedDevices(ctx, spec)
+		err = m.sendToPairedDevices(ctx, specCopyForPairedDevices)
 
 		if err != nil {
 			return nil, err
@@ -2753,6 +2757,58 @@ type ReceivedMessageState struct {
 	Timesource common.TimeSource
 }
 
+func (m *Messenger) markDeliveredMessages(acks [][]byte) {
+	for _, ack := range acks {
+		//get message ID from database by datasync ID
+		messageID, err := m.persistence.RawMessageIDFromDatasyncID(ack)
+		if err != nil {
+			m.logger.Info("got datasync acknowledge for message we don't have in db", zap.String("ack", hex.EncodeToString(ack)))
+			continue
+		}
+
+		//mark messages as delivered
+		err = m.UpdateMessageOutgoingStatus(messageID, common.OutgoingStatusDelivered)
+		if err != nil {
+			m.logger.Debug("Can't set message status as delivered", zap.Error(err))
+		}
+
+		//send signal to client that message status updated
+		if m.config.messageDeliveredHandler != nil {
+			message, err := m.persistence.MessageByID(messageID)
+			if err != nil {
+				m.logger.Debug("Can't get message from database", zap.Error(err))
+				continue
+			}
+			m.config.messageDeliveredHandler(message.LocalChatID, messageID)
+		}
+	}
+}
+
+// addNewMessageNotification takes a common.Message and generates a new MessageNotificationBody and appends it to the
+// []Response.Notifications if the message is m.New
+func (r *ReceivedMessageState) addNewMessageNotification(m *common.Message) error {
+	if !m.New {
+		return nil
+	}
+
+	pubKey, err := m.GetSenderPubKey()
+	if err != nil {
+		return err
+	}
+	contactID := contactIDFromPublicKey(pubKey)
+
+	r.Response.Notifications = append(
+		r.Response.Notifications,
+		MessageNotificationBody{
+			Message: m,
+			Contact: r.AllContacts[contactID],
+			Chat:    r.AllChats[m.ChatId],
+		},
+	)
+
+	return nil
+}
+
 func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filter][]*types.Message) (*MessengerResponse, error) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
@@ -2773,16 +2829,18 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 	}
 
 	logger := m.logger.With(zap.String("site", "RetrieveAll"))
+
 	for _, messages := range chatWithMessages {
 		var processedMessages []string
 		for _, shhMessage := range messages {
 			// Indicates tha all messages in the batch have been processed correctly
 			allMessagesProcessed := true
-			statusMessages, err := m.processor.HandleMessages(shhMessage, true)
+			statusMessages, acks, err := m.processor.HandleMessages(shhMessage, true)
 			if err != nil {
 				logger.Info("failed to decode messages", zap.Error(err))
 				continue
 			}
+			m.markDeliveredMessages(acks)
 
 			logger.Debug("processing messages further", zap.Int("count", len(statusMessages)))
 
@@ -2801,6 +2859,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 				if _, ok := messageState.AllContacts[senderID]; ok && messageState.AllContacts[senderID].IsBlocked() {
 					continue
 				}
+
 				// Don't process duplicates
 				messageID := types.EncodeHex(msg.ID)
 				exists, err := m.handler.messageExists(messageID, messageState.ExistingMessagesMap)
@@ -2834,6 +2893,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 				}
 
 				if msg.ParsedMessage != nil {
+
 					logger.Debug("Handling parsed message")
 					switch msg.ParsedMessage.Interface().(type) {
 					case protobuf.MembershipUpdateMessage:
@@ -3234,6 +3294,11 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 	for _, message := range messageState.Response.Messages {
 		if _, ok := newMessagesIds[message.ID]; ok {
 			message.New = true
+
+			// Create notification body to be eventually passed to `localnotifications.SendMessageNotifications()`
+			if err = messageState.addNewMessageNotification(message); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -4197,6 +4262,16 @@ func (m *Messenger) ValidateTransactions(ctx context.Context, addresses []types.
 		m.allChats[chat.ID] = chat
 		modifiedChats[chat.ID] = true
 
+		contact, err := m.getOrBuildContactFromMessage(message)
+		if err != nil {
+			return nil, err
+		}
+		response.Notifications = append(response.Notifications, MessageNotificationBody{
+			Message: message,
+			Contact: contact,
+			Chat:    m.allChats[message.ChatId],
+		})
+
 	}
 	for id := range modifiedChats {
 		response.Chats = append(response.Chats, m.allChats[id])
@@ -4606,4 +4681,23 @@ func (m *Messenger) encodeChatEntity(chat *Chat, message common.ChatEntity) ([]b
 	}
 
 	return encodedMessage, nil
+}
+
+func (m *Messenger) getOrBuildContactFromMessage(msg *common.Message) (*Contact, error) {
+	if c, ok := m.allContacts[msg.From]; ok {
+		return c, nil
+	}
+
+	senderPubKey, err := msg.GetSenderPubKey()
+	if err != nil {
+		return nil, err
+	}
+	senderID := contactIDFromPublicKey(senderPubKey)
+	c, err := buildContact(senderID, senderPubKey)
+	if err != nil {
+		return nil, err
+	}
+
+	m.allContacts[msg.From] = c
+	return c, nil
 }
