@@ -15,7 +15,10 @@ func ImageType(buf []byte) protobuf.ImageType {
 		return protobuf.ImageType_GIF
 	case images.WEBP:
 		return protobuf.ImageType_WEBP
+	case images.MP4:
+		return protobuf.ImageType_MP4
 	default:
 		return protobuf.ImageType_UNKNOWN_IMAGE_TYPE
 	}
 }
+ 

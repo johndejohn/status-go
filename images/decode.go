@@ -4,6 +4,7 @@ import (
 	"errors"
 	"image"
 	"image/gif"
+	"image/mp4"
 	"image/jpeg"
 	"image/png"
 	"io"
@@ -52,6 +53,8 @@ func decodeImageData(buf []byte, r io.Reader) (img image.Image, err error) {
 		img, err = png.Decode(r)
 	case GIF:
 		img, err = gif.Decode(r)
+	case MP4:
+		img, err = mp4.Decode(r)
 	case WEBP:
 		img, err = webp.Decode(r)
 	case UNKNOWN:
@@ -74,6 +77,8 @@ func GetType(buf []byte) ImageType {
 		return PNG
 	case isGif(buf):
 		return GIF
+	case isMp4(buf):
+		return MP4
 	case isWebp(buf):
 		return WEBP
 	default:
@@ -89,6 +94,8 @@ func GetMimeType(buf []byte) (string, error) {
 		return "png", nil
 	case isGif(buf):
 		return "gif", nil
+	case isMp4(buf):
+		return "mp4", nil
 	case isWebp(buf):
 		return "webp", nil
 	default:

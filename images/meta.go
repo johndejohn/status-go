@@ -8,6 +8,7 @@ const (
 	PNG
 	GIF
 	WEBP
+	MP4
 )
 
 const (
