@@ -4,8 +4,6 @@ import (
 	"crypto/ecdsa"
 	"encoding/hex"
 	"fmt"
-	
-
 	"github.com/pkg/errors"
 
 	"github.com/status-im/status-go/eth-node/crypto"
@@ -451,7 +449,11 @@ func (m *MessageHandler) HandleChatMessage(state *ReceivedMessageState) error {
 
 	// It looks like status-react created profile chats as public chats
 	// so for now we need to check for the presence of "@" in their chatID
-	
+
+	if chat.Public() && receivedMessage.ContentType == protobuf.ChatMessage_IMAGE && !chat.ProfileUpdates() {
+		return errors.New("images are not allowed in public chats")
+	}
+
 
 	// If profile updates check if author is the same as chat profile public key
 	if chat.ProfileUpdates() && receivedMessage.From != chat.Profile {
