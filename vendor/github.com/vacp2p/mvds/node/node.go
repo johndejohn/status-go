@@ -328,6 +328,7 @@ func (n *Node) sendMessages() error {
 
 				return s
 			}
+			msg.GroupId = g[:]
 
 			n.payloads.AddMessages(p, msg)
 			n.logger.Debug("sending MESSAGE",
