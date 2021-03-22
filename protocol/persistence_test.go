@@ -913,10 +913,10 @@ func TestConfirmations(t *testing.T) {
 	dataSyncID1 := []byte("datsync-id-1")
 	dataSyncID2 := []byte("datsync-id-2")
 	dataSyncID3 := []byte("datsync-id-3")
-	dataSyncID4 := []byte("datsync-id-3")
 
 	messageID1 := []byte("message-id-1")
 	messageID2 := []byte("message-id-2")
+	messageID3 := []byte("message-id-3")
 
 	publicKey1 := []byte("pk-1")
 	publicKey2 := []byte("pk-2")
@@ -934,22 +934,36 @@ func TestConfirmations(t *testing.T) {
 
 	// Same datasyncID and same messageID, different pubkey
 	confirmation2 := &common.RawMessageConfirmation{
-		DataSyncID: dataSyncID2,
+		DataSyncID: dataSyncID1,
 		MessageID:  messageID1,
 		PublicKey:  publicKey2,
 	}
 
 	// Different datasyncID and same messageID, different pubkey
 	confirmation3 := &common.RawMessageConfirmation{
-		DataSyncID: dataSyncID3,
+		DataSyncID: dataSyncID2,
 		MessageID:  messageID1,
 		PublicKey:  publicKey3,
 	}
 
 	// Same dataSyncID, different messageID
 	confirmation4 := &common.RawMessageConfirmation{
-		DataSyncID: dataSyncID4,
+		DataSyncID: dataSyncID1,
 		MessageID:  messageID2,
+		PublicKey:  publicKey1,
+	}
+
+	// Same dataSyncID, different messageID
+	confirmation5 := &common.RawMessageConfirmation{
+		DataSyncID: dataSyncID1,
+		MessageID:  messageID3,
+		PublicKey:  publicKey1,
+	}
+
+	// Different dataSyncID, different messageID
+	confirmation6 := &common.RawMessageConfirmation{
+		DataSyncID: dataSyncID3,
+		MessageID:  messageID3,
 		PublicKey:  publicKey1,
 	}
 
@@ -957,65 +971,21 @@ func TestConfirmations(t *testing.T) {
 	require.NoError(t, p.InsertPendingConfirmation(confirmation2))
 	require.NoError(t, p.InsertPendingConfirmation(confirmation3))
 	require.NoError(t, p.InsertPendingConfirmation(confirmation4))
+	require.NoError(t, p.InsertPendingConfirmation(confirmation5))
+	require.NoError(t, p.InsertPendingConfirmation(confirmation6))
 
-	// We confirm the first datasync message, no confirmations
-	messageID, err := p.MarkAsConfirmed(dataSyncID1, false)
+	// We confirm the first datasync message, messageID2 should be confirmed
+	messageIDs, err := p.MarkAsConfirmed(dataSyncID1)
 	require.NoError(t, err)
-	require.Nil(t, messageID)
+	require.NotNil(t, messageIDs)
+	require.Len(t, messageIDs, 1)
+	require.Equal(t, messageIDs[0], types.HexBytes(messageID2))
 
-	// We confirm the second datasync message, no confirmations
-	messageID, err = p.MarkAsConfirmed(dataSyncID2, false)
+	// We confirm the second datasync message, messageID1 should be confirmed
+	messageIDs, err = p.MarkAsConfirmed(dataSyncID2)
 	require.NoError(t, err)
-	require.Nil(t, messageID)
+	require.NotNil(t, messageIDs)
+	require.Len(t, messageIDs, 1)
+	require.Equal(t, messageIDs[0], types.HexBytes(messageID1))
 
-	// We confirm the third datasync message, messageID1 should be confirmed
-	messageID, err = p.MarkAsConfirmed(dataSyncID3, false)
-	require.NoError(t, err)
-	require.Equal(t, messageID, types.HexBytes(messageID1))
-}
-
-func TestConfirmationsAtLeastOne(t *testing.T) {
-	dataSyncID1 := []byte("datsync-id-1")
-	dataSyncID2 := []byte("datsync-id-2")
-	dataSyncID3 := []byte("datsync-id-3")
-
-	messageID1 := []byte("message-id-1")
-
-	publicKey1 := []byte("pk-1")
-	publicKey2 := []byte("pk-2")
-	publicKey3 := []byte("pk-3")
-
-	db, err := openTestDB()
-	require.NoError(t, err)
-	p := NewSQLitePersistence(db)
-
-	confirmation1 := &common.RawMessageConfirmation{
-		DataSyncID: dataSyncID1,
-		MessageID:  messageID1,
-		PublicKey:  publicKey1,
-	}
-
-	// Same datasyncID and same messageID, different pubkey
-	confirmation2 := &common.RawMessageConfirmation{
-		DataSyncID: dataSyncID2,
-		MessageID:  messageID1,
-		PublicKey:  publicKey2,
-	}
-
-	// Different datasyncID and same messageID, different pubkey
-	confirmation3 := &common.RawMessageConfirmation{
-		DataSyncID: dataSyncID3,
-		MessageID:  messageID1,
-		PublicKey:  publicKey3,
-	}
-
-	require.NoError(t, p.InsertPendingConfirmation(confirmation1))
-	require.NoError(t, p.InsertPendingConfirmation(confirmation2))
-	require.NoError(t, p.InsertPendingConfirmation(confirmation3))
-
-	// We confirm the first datasync message, messageID1 and 3 should be confirmed
-	messageID, err := p.MarkAsConfirmed(dataSyncID1, true)
-	require.NoError(t, err)
-	require.NotNil(t, messageID)
-	require.Equal(t, types.HexBytes(messageID1), messageID)
 }

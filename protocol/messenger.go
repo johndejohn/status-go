@@ -2428,29 +2428,30 @@ type ReceivedMessageState struct {
 
 func (m *Messenger) markDeliveredMessages(acks [][]byte) {
 	for _, ack := range acks {
-		//get message ID from database by datasync ID, with at-least-one
-		// semantic
-		messageIDBytes, err := m.persistence.MarkAsConfirmed(ack, true)
+		//get message ID from database by datasync ID
+		messageIDs, err := m.persistence.MarkAsConfirmed(ack)
 		if err != nil {
 			m.logger.Info("got datasync acknowledge for message we don't have in db", zap.String("ack", hex.EncodeToString(ack)))
 			continue
 		}
 
-		messageID := messageIDBytes.String()
-		//mark messages as delivered
-		err = m.UpdateMessageOutgoingStatus(messageID, common.OutgoingStatusDelivered)
-		if err != nil {
-			m.logger.Debug("Can't set message status as delivered", zap.Error(err))
-		}
-
-		//send signal to client that message status updated
-		if m.config.messageDeliveredHandler != nil {
-			message, err := m.persistence.MessageByID(messageID)
+		for _, messageIDBytes := range messageIDs {
+			messageID := messageIDBytes.String()
+			//mark messages as delivered
+			err = m.UpdateMessageOutgoingStatus(messageID, common.OutgoingStatusDelivered)
 			if err != nil {
-				m.logger.Debug("Can't get message from database", zap.Error(err))
-				continue
+				m.logger.Debug("Can't set message status as delivered", zap.Error(err))
 			}
-			m.config.messageDeliveredHandler(message.LocalChatID, messageID)
+
+			//send signal to client that message status updated
+			if m.config.messageDeliveredHandler != nil {
+				message, err := m.persistence.MessageByID(messageID)
+				if err != nil {
+					m.logger.Debug("Can't get message from database", zap.Error(err))
+					continue
+				}
+				m.config.messageDeliveredHandler(message.LocalChatID, messageID)
+			}
 		}
 	}
 }

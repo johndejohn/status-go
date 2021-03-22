@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/gob"
+	"encoding/hex"
 	"time"
 
 	"github.com/status-im/status-go/eth-node/crypto"
@@ -180,10 +181,8 @@ func (db RawMessagesPersistence) RawMessagesIDsByType(t protobuf.ApplicationMeta
 }
 
 // MarkAsConfirmed marks all the messages with dataSyncID as confirmed and returns
-// the messageIDs that can be considered confirmed.
-// If atLeastOne is set it will return messageid if at least once of the messages
-// sent has been confirmed
-func (db RawMessagesPersistence) MarkAsConfirmed(dataSyncID []byte, atLeastOne bool) (messageID types.HexBytes, err error) {
+// the messageIDs that can be considered confirmed
+func (db RawMessagesPersistence) MarkAsConfirmed(dataSyncID []byte) (messageIDs []types.HexBytes, err error) {
 	tx, err := db.db.BeginTx(context.Background(), &sql.TxOptions{})
 	if err != nil {
 		return nil, err
@@ -204,33 +203,42 @@ func (db RawMessagesPersistence) MarkAsConfirmed(dataSyncID []byte, atLeastOne b
 	}
 
 	// Select any tuple that has a message_id with a datasync_id = ? and that has just been confirmed
-	rows, err := tx.Query(`SELECT message_id,confirmed_at FROM raw_message_confirmations WHERE message_id = (SELECT message_id FROM raw_message_confirmations WHERE datasync_id = ? LIMIT 1)`, dataSyncID)
+	rows, err := tx.Query(`SELECT message_id,confirmed_at FROM raw_message_confirmations WHERE message_id IN (SELECT message_id FROM raw_message_confirmations WHERE datasync_id = ?)`, dataSyncID)
 	if err != nil {
 		return
 	}
 	defer rows.Close()
 
-	confirmedResult := true
+	confirmedMessageIDs := make(map[string]bool)
 
 	for rows.Next() {
+		var messageID []byte
 		var confirmedAt int64
 		err = rows.Scan(&messageID, &confirmedAt)
 		if err != nil {
 			return
 		}
-		confirmed := confirmedAt > 0
+		idString := hex.EncodeToString(messageID)
 
-		if atLeastOne && confirmed {
-			// We return, as at least one was confirmed
-			return
+		confirmed, ok := confirmedMessageIDs[idString]
+		if !ok {
+			confirmedMessageIDs[idString] = confirmedAt > 0
+		} else {
+			confirmedMessageIDs[idString] = confirmed && confirmedAt > 0
 		}
 
-		confirmedResult = confirmedResult && confirmed
 	}
 
-	if !confirmedResult {
-		messageID = nil
-		return
+	// Collect results
+	for idString, confirmed := range confirmedMessageIDs {
+		if confirmed {
+			var id []byte
+			id, err = hex.DecodeString(idString)
+			if err != nil {
+				return
+			}
+			messageIDs = append(messageIDs, id)
+		}
 	}
 
 	return
