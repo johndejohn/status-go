@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"crypto/ecdsa"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 
@@ -49,9 +50,13 @@ func newMessageHandler(identity *ecdsa.PrivateKey, logger *zap.Logger, persisten
 // HandleMembershipUpdate updates a Chat instance according to the membership updates.
 // It retrieves chat, if exists, and merges membership updates from the message.
 // Finally, the Chat is updated with the new group events.
-func (m *MessageHandler) HandleMembershipUpdate(messageState *ReceivedMessageState, chat *Chat, rawMembershipUpdate protobuf.MembershipUpdateMessage, translations map[protobuf.MembershipUpdateEvent_EventType]string) error {
+func (m *MessageHandler) HandleMembershipUpdate(messageState *ReceivedMessageState, msg *v1protocol.StatusMessage, translations map[protobuf.MembershipUpdateEvent_EventType]string) error {
 	var group *v1protocol.Group
 	var err error
+
+	rawMembershipUpdate := msg.ParsedMessage.Interface().(protobuf.MembershipUpdateMessage)
+
+	chat := messageState.AllChats[rawMembershipUpdate.ChatId]
 
 	logger := m.logger.With(zap.String("site", "HandleMembershipUpdate"))
 
@@ -146,8 +151,7 @@ func (m *MessageHandler) HandleMembershipUpdate(messageState *ReceivedMessageSta
 	messageState.Response.AddChat(chat)
 
 	if message.Message != nil {
-		messageState.CurrentMessageState.Message = *message.Message
-		return m.HandleChatMessage(messageState)
+		return m.HandleChatMessage(messageState, msg, message.Message)
 	} else if message.EmojiReaction != nil {
 		return m.HandleEmojiReaction(messageState, *message.EmojiReaction)
 	}
@@ -423,9 +427,10 @@ func (m *MessageHandler) handleWrappedCommunityDescriptionMessage(payload []byte
 	return m.communitiesManager.HandleWrappedCommunityDescriptionMessage(payload)
 }
 
-func (m *MessageHandler) HandleChatMessage(state *ReceivedMessageState) error {
+func (m *MessageHandler) HandleChatMessage(state *ReceivedMessageState, statusMessage *v1protocol.StatusMessage, msg *protobuf.ChatMessage) error {
+
 	logger := m.logger.With(zap.String("site", "handleChatMessage"))
-	if err := ValidateReceivedChatMessage(&state.CurrentMessageState.Message, state.CurrentMessageState.WhisperTimestamp); err != nil {
+	if err := ValidateReceivedChatMessage(msg, state.CurrentMessageState.WhisperTimestamp); err != nil {
 		logger.Warn("failed to validate message", zap.Error(err))
 		return err
 	}
@@ -446,6 +451,46 @@ func (m *MessageHandler) HandleChatMessage(state *ReceivedMessageState) error {
 	chat, err := m.matchChatEntity(receivedMessage, state.AllChats, state.Timesource)
 	if err != nil {
 		return err // matchChatEntity returns a descriptive error message
+	}
+
+	// If it's coming from us, we save the message as a raw message
+	if receivedMessage.From == types.EncodeHex(crypto.FromECDSAPub(&m.identity.PublicKey)) {
+		// TODO: set recipients
+		rawMessage := &common.RawMessage{
+			Payload:     statusMessage.DecryptedPayload,
+			MessageType: statusMessage.Type,
+			LocalChatID: chat.ID,
+		}
+
+		err := m.persistence.SaveRawMessage(rawMessage)
+		if err != nil {
+			return err
+		}
+
+		datasyncID := sha256.Sum256(statusMessage.DecryptedPayload)
+
+		messageIDBytes, err := types.DecodeHex(receivedMessage.ID)
+		if err != nil {
+			return err
+		}
+		confirmation := &common.RawMessageConfirmation{
+			DataSyncID: datasyncID[:],
+			MessageID:  messageIDBytes,
+		}
+
+		recipients, err := chat.ChatMessageRecipients()
+		if err != nil {
+			return err
+		}
+
+		for _, recipient := range recipients {
+			confirmation.PublicKey = crypto.CompressPubkey(recipient)
+			err = m.persistence.InsertPendingConfirmation(confirmation)
+			if err != nil {
+				return err
+			}
+		}
+
 	}
 
 	// It looks like status-react created profile chats as public chats
@@ -884,6 +929,8 @@ func (m *MessageHandler) HandleEmojiReaction(state *ReceivedMessageState, pbEmoj
 	if err != nil {
 		return err // matchChatEntity returns a descriptive error message
 	}
+
+	// If coming from us, store a raw message so it can be re-transmitted
 
 	// Set local chat id
 	emojiReaction.LocalChatID = chat.ID

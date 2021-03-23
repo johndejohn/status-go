@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/gob"
 	"encoding/hex"
+	"fmt"
 	"time"
 
 	"github.com/status-im/status-go/eth-node/crypto"
@@ -245,6 +246,7 @@ func (db RawMessagesPersistence) MarkAsConfirmed(dataSyncID []byte) (messageIDs 
 }
 
 func (db RawMessagesPersistence) InsertPendingConfirmation(confirmation *RawMessageConfirmation) error {
+	fmt.Println("INSERTING PENDING", hex.EncodeToString(confirmation.DataSyncID))
 
 	_, err := db.db.Exec(`INSERT INTO raw_message_confirmations
 		 (datasync_id, message_id, public_key)

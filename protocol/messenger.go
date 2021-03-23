@@ -2429,11 +2429,15 @@ type ReceivedMessageState struct {
 func (m *Messenger) markDeliveredMessages(acks [][]byte) {
 	for _, ack := range acks {
 		//get message ID from database by datasync ID
+
+		m.logger.Info("RECEIVED ACK", zap.String("ack", types.EncodeHex(ack)))
 		messageIDs, err := m.persistence.MarkAsConfirmed(ack)
 		if err != nil {
 			m.logger.Info("got datasync acknowledge for message we don't have in db", zap.String("ack", hex.EncodeToString(ack)))
 			continue
 		}
+
+		m.logger.Info("MESSAGE IDS", zap.Any("messageIDs", messageIDs))
 
 		for _, messageIDBytes := range messageIDs {
 			messageID := messageIDBytes.String()
@@ -2574,9 +2578,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 					case protobuf.MembershipUpdateMessage:
 						logger.Debug("Handling MembershipUpdateMessage")
 
-						rawMembershipUpdate := msg.ParsedMessage.Interface().(protobuf.MembershipUpdateMessage)
-
-						err = m.handler.HandleMembershipUpdate(messageState, messageState.AllChats[rawMembershipUpdate.ChatId], rawMembershipUpdate, m.systemMessagesTranslations)
+						err = m.handler.HandleMembershipUpdate(messageState, msg, m.systemMessagesTranslations)
 						if err != nil {
 							logger.Warn("failed to handle MembershipUpdate", zap.Error(err))
 							allMessagesProcessed = false
@@ -2585,8 +2587,8 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 
 					case protobuf.ChatMessage:
 						logger.Debug("Handling ChatMessage")
-						messageState.CurrentMessageState.Message = msg.ParsedMessage.Interface().(protobuf.ChatMessage)
-						err = m.handler.HandleChatMessage(messageState)
+						chatMessage := msg.ParsedMessage.Interface().(protobuf.ChatMessage)
+						err = m.handler.HandleChatMessage(messageState, msg, &chatMessage)
 						if err != nil {
 							logger.Warn("failed to handle ChatMessage", zap.Error(err))
 							allMessagesProcessed = false

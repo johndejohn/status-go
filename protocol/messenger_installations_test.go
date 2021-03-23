@@ -12,6 +12,7 @@ import (
 	gethbridge "github.com/status-im/status-go/eth-node/bridge/geth"
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
+	"github.com/status-im/status-go/protocol/common"
 	"github.com/status-im/status-go/protocol/encryption/multidevice"
 	"github.com/status-im/status-go/protocol/tt"
 	"github.com/status-im/status-go/waku"
@@ -275,6 +276,148 @@ func (s *MessengerInstallationSuite) TestSyncInstallationNewMessages() {
 		func(r *MessengerResponse) bool { return len(r.Messages) > 0 },
 		"message not received",
 	)
+	s.Require().NoError(err)
+	s.Require().NoError(bob2.Shutdown())
+	s.Require().NoError(alice.Shutdown())
+}
+
+func (s *MessengerInstallationSuite) TestSyncInstallationNewPrivateGroupMessages() {
+
+	bob1 := s.m
+	// pair
+	bob2, err := newMessengerWithKey(s.shh, s.privateKey, s.logger, nil)
+	s.Require().NoError(err)
+	alice := s.newMessenger(s.shh)
+
+	err = bob2.SetInstallationMetadata(bob2.installationID, &multidevice.InstallationMetadata{
+		Name:       "their-name",
+		DeviceType: "their-device-type",
+	})
+	s.Require().NoError(err)
+	response, err := bob2.SendPairInstallation(context.Background())
+	s.Require().NoError(err)
+	s.Require().NotNil(response)
+	s.Require().Len(response.Chats(), 1)
+	s.Require().False(response.Chats()[0].Active)
+
+	// Wait for the message to reach its destination
+	response, err = WaitOnMessengerResponse(
+		bob1,
+		func(r *MessengerResponse) bool { return len(r.Installations) > 0 },
+		"installation not received",
+	)
+
+	s.Require().NoError(err)
+	actualInstallation := response.Installations[0]
+	s.Require().Equal(bob2.installationID, actualInstallation.ID)
+	err = bob1.EnableInstallation(bob2.installationID)
+	s.Require().NoError(err)
+
+	response, err = s.m.CreateGroupChatWithMembers(context.Background(), "test", []string{})
+	s.NoError(err)
+	s.Require().Len(response.Chats(), 1)
+
+	chat := response.Chats()[0]
+
+	// create a group chat with alice
+	alicePkString := types.EncodeHex(crypto.FromECDSAPub(&alice.identity.PublicKey))
+	members := []string{alicePkString}
+	_, err = s.m.AddMembersToGroupChat(context.Background(), chat.ID, members)
+	s.NoError(err)
+
+	// Retrieve their messages so that the chat is created
+	_, err = WaitOnMessengerResponse(
+		alice,
+		func(r *MessengerResponse) bool { return len(r.Chats()) > 0 },
+		"chat invitation not received",
+	)
+	s.Require().NoError(err)
+
+	// Join group with alice
+	_, err = alice.ConfirmJoiningGroup(context.Background(), chat.ID)
+	s.NoError(err)
+
+	// Wait for the message to reach its destination bob1
+	response, err = WaitOnMessengerResponse(
+		bob1,
+		func(r *MessengerResponse) bool { return len(r.Chats()) > 0 },
+		"no joining group event received",
+	)
+	s.Require().NoError(err)
+	joinedChat := response.Chats()[0]
+	joinedMembers, err := joinedChat.JoinedMembersAsPublicKeys()
+	s.Require().NoError(err)
+	s.Require().Len(joinedMembers, 2)
+
+	// Wait for the message to reach its destination on bob2
+	response, err = WaitOnMessengerResponse(
+		bob2,
+		func(r *MessengerResponse) bool { return len(r.Chats()) > 0 },
+		"no joining group event received",
+	)
+	s.Require().NoError(err)
+	joinedChat = response.Chats()[0]
+	joinedMembers, err = joinedChat.JoinedMembersAsPublicKeys()
+	s.Require().NoError(err)
+	s.Require().Len(joinedMembers, 2)
+
+	inputMessage := buildTestMessage(*chat)
+	response, err = s.m.SendChatMessage(context.Background(), inputMessage)
+	s.Require().NoError(err)
+
+	messageID := response.Messages[0].ID
+
+	// Wait for the message to reach its destination on the paired device
+	_, err = WaitOnMessengerResponse(
+		bob2,
+		func(r *MessengerResponse) bool { return len(r.Messages) > 0 },
+		"message not received",
+	)
+
+	// We need to re-send the chat message because we share a single waku instance and it has been consumed by the previous action
+	err = bob1.ReSendChatMessage(context.Background(), messageID)
+	s.Require().NoError(err)
+
+	// Wait for the message to reach its destination on alice device
+	_, err = WaitOnMessengerResponse(
+		alice,
+		func(r *MessengerResponse) bool { return len(r.Messages) > 0 },
+		"message not received",
+	)
+	s.Require().NoError(err)
+	bob1.logger.Info("ALICE", zap.String("key", common.PubkeyToHex(&alice.identity.PublicKey)))
+	bob1.logger.Info("BOB", zap.String("key", common.PubkeyToHex(&bob1.identity.PublicKey)))
+
+	// Check the message is confirmed
+	err = tt.RetryWithBackOff(func() error {
+		var err error
+
+		bob1Message, err := bob1.persistence.MessageByID(messageID)
+		if err != nil {
+			return err
+		}
+
+		bob2Message, err := bob2.persistence.MessageByID(messageID)
+		if err != nil {
+			return err
+		}
+
+		if bob1Message.OutgoingStatus == common.OutgoingStatusDelivered && bob2Message.OutgoingStatus == common.OutgoingStatusDelivered {
+			return nil
+		}
+
+		_, err = bob2.RetrieveAll()
+		if err != nil {
+			return err
+		}
+		_, err = alice.RetrieveAll()
+		if err != nil {
+			return err
+		}
+
+		return errors.New("message not confirmed")
+	})
+
 	s.Require().NoError(err)
 	s.Require().NoError(bob2.Shutdown())
 	s.Require().NoError(alice.Shutdown())

@@ -108,6 +108,10 @@ func (c *Chat) OneToOne() bool {
 	return c.ChatType == ChatTypeOneToOne
 }
 
+func (c *Chat) PrivateGroupChat() bool {
+	return c.ChatType == ChatTypePrivateGroupChat
+}
+
 func (c *Chat) CommunityChatID() string {
 	if c.ChatType != ChatTypeCommunityChat {
 		return c.ID
@@ -203,6 +207,19 @@ func (c *Chat) NextClockAndTimestamp(timesource common.TimeSource) (uint64, uint
 		clock = clock + 1
 	}
 	return clock, timestamp
+}
+
+// ChatMessageRecipients returns the public keys of the recipients for a chat message
+func (c *Chat) ChatMessageRecipients() ([]*ecdsa.PublicKey, error) {
+	if c.PrivateGroupChat() {
+		return c.JoinedMembersAsPublicKeys()
+	}
+
+	if c.OneToOne() {
+		return nil, nil
+	}
+
+	return nil, nil
 }
 
 func (c *Chat) UpdateFromMessage(message *common.Message, timesource common.TimeSource) error {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"database/sql"
+	"fmt"
 	"sync"
 	"time"
 
@@ -464,6 +465,7 @@ func (p *MessageProcessor) SendPublic(
 // returns cloned messages with replaced payloads
 func unwrapDatasyncMessage(m *v1protocol.StatusMessage, datasync *datasync.DataSync) ([]*v1protocol.StatusMessage, [][]byte, error) {
 	var statusMessages []*v1protocol.StatusMessage
+	fmt.Println("RECEIVED MESSAGE FROM", PubkeyToHex(m.SigPubKey()))
 
 	payloads, acks, err := datasync.UnwrapPayloadsAndAcks(
 		m.SigPubKey(),
