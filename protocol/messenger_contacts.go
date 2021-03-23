@@ -133,14 +133,17 @@ func (m *Messenger) RemoveContact(ctx context.Context, pubKey string) (*Messenge
 }
 
 func (m *Messenger) Contacts() []*Contact {
+	m.logger.Debug("locking for contacts")
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
+	m.logger.Debug("locked for contacts")
 	var contacts []*Contact
 	for _, contact := range m.allContacts {
 		if contact.HasCustomFields() {
 			contacts = append(contacts, contact)
 		}
 	}
+	m.logger.Debug("returning contacts")
 	return contacts
 }
 

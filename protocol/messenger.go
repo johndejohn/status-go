@@ -418,6 +418,7 @@ func (m *Messenger) Start() (*MessengerResponse, error) {
 		}
 	}
 
+	m.logger.Debug("subscribing to ens")
 	ensSubscription := m.ensVerifier.Subscribe()
 
 	// Subscrbe
@@ -437,6 +438,7 @@ func (m *Messenger) Start() (*MessengerResponse, error) {
 		return nil, err
 	}
 
+	m.logger.Debug("handling shared secrets")
 	// handle stored shared secrets
 	err = m.handleSharedSecrets(subscriptions.SharedSecrets)
 	if err != nil {
@@ -450,9 +452,11 @@ func (m *Messenger) Start() (*MessengerResponse, error) {
 	m.watchConnectionChange()
 	m.watchExpiredEmojis()
 	m.watchIdentityImageChanges()
+	m.logger.Debug("cleaning topcis")
 	if err := m.cleanTopics(); err != nil {
 		return nil, err
 	}
+	m.logger.Debug("cleaned topcis")
 	response := &MessengerResponse{Filters: m.transport.Filters()}
 
 	if m.mailserversDatabase != nil {
@@ -475,6 +479,7 @@ func (m *Messenger) Start() (*MessengerResponse, error) {
 		response.Mailservers = mailservers
 
 	}
+	m.logger.Debug("added mailserver stuff")
 	return response, nil
 }
 
@@ -949,8 +954,10 @@ func (m *Messenger) handlePushNotificationClientRegistrations(c chan struct{}) {
 // Init analyzes chats and contacts in order to setup filters
 // which are responsible for retrieving messages.
 func (m *Messenger) Init() error {
+	m.logger.Debug("init messenger")
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
+	m.logger.Debug("init messenger locked")
 
 	// Seed the for color generation
 	rand.Seed(time.Now().Unix())
@@ -971,6 +978,8 @@ func (m *Messenger) Init() error {
 		publicChatIDs = append(publicChatIDs, org.IDString())
 	}
 
+	logger.Debug("got joined communities")
+
 	// Init filters for the communities we are an admin of
 	var adminCommunitiesPks []*ecdsa.PrivateKey
 	adminCommunities, err := m.communitiesManager.Created()
@@ -981,18 +990,21 @@ func (m *Messenger) Init() error {
 	for _, c := range adminCommunities {
 		adminCommunitiesPks = append(adminCommunitiesPks, c.PrivateKey())
 	}
+	logger.Debug("got created communities")
 
 	_, err = m.transport.InitCommunityFilters(adminCommunitiesPks)
 	if err != nil {
 		return err
 	}
 
+	logger.Debug("init community filters")
 	// Get chat IDs and public keys from the existing chats.
 	// TODO: Get only active chats by the query.
 	chats, err := m.persistence.Chats()
 	if err != nil {
 		return err
 	}
+	logger.Debug("got chats")
 	for _, chat := range chats {
 		if err := chat.Validate(); err != nil {
 			logger.Warn("failed to validate chat", zap.Error(err))
@@ -1027,7 +1039,9 @@ func (m *Messenger) Init() error {
 			return errors.New("invalid chat type")
 		}
 	}
+	logger.Debug("processed chats")
 
+	logger.Debug("getting contacts")
 	// Get chat IDs and public keys from the contacts.
 	contacts, err := m.persistence.Contacts()
 	if err != nil {
@@ -1046,7 +1060,9 @@ func (m *Messenger) Init() error {
 		}
 		publicKeys = append(publicKeys, publicKey)
 	}
+	logger.Debug("processed contacts")
 
+	logger.Debug("processing installations")
 	installations, err := m.encryptor.GetOurInstallations(&m.identity.PublicKey)
 	if err != nil {
 		return err
@@ -1055,8 +1071,10 @@ func (m *Messenger) Init() error {
 	for _, installation := range installations {
 		m.allInstallations[installation.ID] = installation
 	}
+	logger.Debug("processed installations")
 
 	_, err = m.transport.InitFilters(publicChatIDs, publicKeys)
+	logger.Debug("init filters")
 	return err
 }
 
@@ -2054,27 +2072,34 @@ func (m *Messenger) SendChatMessage(ctx context.Context, message *common.Message
 
 // SendChatMessages takes a array of messages and sends it based on the corresponding chats
 func (m *Messenger) SendChatMessages(ctx context.Context, messages []*common.Message) (*MessengerResponse, error) {
+	m.logger.Debug("Sending chat messages")
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
+	m.logger.Debug("locked sending chat messages")
 
 	var response MessengerResponse
 
 	for _, message := range messages {
+		m.logger.Debug("sending single chat message")
 		messageResponse, err := m.sendChatMessage(ctx, message)
 		if err != nil {
 			return nil, err
 		}
+		m.logger.Debug("sent single chat message")
 		err = response.Merge(messageResponse)
 		if err != nil {
 			return nil, err
 		}
+		m.logger.Debug("merged response")
 	}
 
+	m.logger.Debug("returning response")
 	return &response, nil
 }
 
 // SendChatMessage takes a minimal message and sends it based on the corresponding chat
 func (m *Messenger) sendChatMessage(ctx context.Context, message *common.Message) (*MessengerResponse, error) {
+	m.logger.Debug("sending chat message")
 	if len(message.ImagePath) != 0 {
 		file, err := os.Open(message.ImagePath)
 		if err != nil {
@@ -2135,6 +2160,7 @@ func (m *Messenger) sendChatMessage(ctx context.Context, message *common.Message
 			return nil, err
 		}
 	}
+	m.logger.Debug("prepped specical content")
 
 	var response MessengerResponse
 
@@ -2144,20 +2170,24 @@ func (m *Messenger) sendChatMessage(ctx context.Context, message *common.Message
 		return nil, errors.New("Chat not found")
 	}
 
+	m.logger.Debug("handling standalone chat identity")
 	err := m.handleStandaloneChatIdentity(chat)
 	if err != nil {
 		return nil, err
 	}
+	m.logger.Debug("handled standalone chat identity")
 
 	err = extendMessageFromChat(message, chat, &m.identity.PublicKey, m.getTimesource())
 	if err != nil {
 		return nil, err
 	}
+	m.logger.Debug("extended message from chat")
 
 	encodedMessage, err := m.encodeChatEntity(chat, message)
 	if err != nil {
 		return nil, err
 	}
+	m.logger.Debug("encoded chat entity")
 
 	rawMessage := common.RawMessage{
 		LocalChatID:          chat.ID,
@@ -2170,33 +2200,45 @@ func (m *Messenger) sendChatMessage(ctx context.Context, message *common.Message
 	if err != nil {
 		return nil, err
 	}
+	m.logger.Debug("dispatched message")
 
 	if rawMessage.Sent {
 		message.OutgoingStatus = common.OutgoingStatusSent
 	}
 	message.ID = rawMessage.ID
+	m.logger.Debug("preparing content")
 	err = message.PrepareContent()
 	if err != nil {
 		return nil, err
 	}
 
+	m.logger.Debug("prepared content")
 	err = chat.UpdateFromMessage(message, m.getTimesource())
 	if err != nil {
 		return nil, err
 	}
 
+	m.logger.Debug("updated chat from message")
 	err = m.persistence.SaveMessages([]*common.Message{message})
 	if err != nil {
 		return nil, err
 	}
+	m.logger.Debug("saving messages")
 
 	response.Messages, err = m.pullMessagesAndResponsesFromDB([]*common.Message{message})
 	if err != nil {
 		return nil, err
 	}
 
+	m.logger.Debug("pullled from db")
 	response.AddChat(chat)
-	return &response, m.saveChat(chat)
+	m.logger.Debug("added chat to response")
+	err = m.saveChat(chat)
+	if err != nil {
+		return nil, err
+	}
+	m.logger.Debug("saved chat")
+	return &response, nil
 }
 
 // SyncDevices sends all public chats and contacts to paired devices
@@ -2376,10 +2418,12 @@ func (m *Messenger) syncContact(ctx context.Context, contact *Contact) error {
 // RetrieveAll retrieves messages from all filters, processes them and returns a
 // MessengerResponse to the client
 func (m *Messenger) RetrieveAll() (*MessengerResponse, error) {
+	m.logger.Debug("Retrieve all")
 	chatWithMessages, err := m.transport.RetrieveRawAll()
 	if err != nil {
 		return nil, err
 	}
+	m.logger.Debug("Retrieved raw all")
 
 	return m.handleRetrievedMessages(chatWithMessages)
 }
@@ -2486,8 +2530,10 @@ func (r *ReceivedMessageState) addNewMessageNotification(publicKey ecdsa.PublicK
 }
 
 func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filter][]*types.Message) (*MessengerResponse, error) {
+	m.logger.Debug("handling retrieved messages")
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
+	m.logger.Debug("locked retrieved messages")
 	messageState := &ReceivedMessageState{
 		AllChats:              m.allChats,
 		AllContacts:           m.allContacts,
@@ -2504,16 +2550,20 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 
 	logger := m.logger.With(zap.String("site", "RetrieveAll"))
 
+	logger.Debug("handle-retrieved-messages: iterating", zap.Int("count", len(chatWithMessages)))
 	for _, messages := range chatWithMessages {
 		var processedMessages []string
 		for _, shhMessage := range messages {
 			// Indicates tha all messages in the batch have been processed correctly
 			allMessagesProcessed := true
+			logger.Debug("handle-retrieved-messages: handling single message")
 			statusMessages, acks, err := m.processor.HandleMessages(shhMessage, true)
 			if err != nil {
 				logger.Info("failed to decode messages", zap.Error(err))
 				continue
 			}
+			logger.Debug("handle-retrieved-messages: handled status message")
+
 			m.markDeliveredMessages(acks)
 
 			logger.Debug("processing messages further", zap.Int("count", len(statusMessages)))
@@ -2521,13 +2571,16 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 			for _, msg := range statusMessages {
 				publicKey := msg.SigPubKey()
 
+				logger.Debug("handle-retrieved-messages: handling installations")
 				m.handleInstallations(msg.Installations)
+				logger.Debug("handle-retrieved-messages: handling shared secret")
 				err := m.handleSharedSecrets(msg.SharedSecrets)
 				if err != nil {
 					// log and continue, non-critical error
 					logger.Warn("failed to handle shared secrets")
 				}
 
+				logger.Debug("handle-retrieved-messages: building contact")
 				// Check for messages from blocked users
 				senderID := contactIDFromPublicKey(publicKey)
 				if _, ok := messageState.AllContacts[senderID]; ok && messageState.AllContacts[senderID].IsBlocked() {
@@ -2536,6 +2589,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 
 				// Don't process duplicates
 				messageID := types.EncodeHex(msg.ID)
+				logger.Debug("handle-retrieved-messages: checking message exists")
 				exists, err := m.handler.messageExists(messageID, messageState.ExistingMessagesMap)
 				if err != nil {
 					logger.Warn("failed to check message exists", zap.Error(err))
@@ -2545,6 +2599,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 					continue
 				}
 
+				logger.Debug("handle-retrieved-messages: checked message exists")
 				var contact *Contact
 				if c, ok := messageState.AllContacts[senderID]; ok {
 					contact = c
@@ -2576,6 +2631,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						rawMembershipUpdate := msg.ParsedMessage.Interface().(protobuf.MembershipUpdateMessage)
 
 						err = m.handler.HandleMembershipUpdate(messageState, messageState.AllChats[rawMembershipUpdate.ChatId], rawMembershipUpdate, m.systemMessagesTranslations)
+						logger.Debug("handled membership updated message")
 						if err != nil {
 							logger.Warn("failed to handle MembershipUpdate", zap.Error(err))
 							allMessagesProcessed = false
@@ -2586,6 +2642,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						logger.Debug("Handling ChatMessage")
 						messageState.CurrentMessageState.Message = msg.ParsedMessage.Interface().(protobuf.ChatMessage)
 						err = m.handler.HandleChatMessage(messageState)
+						logger.Debug("handled chat message")
 						if err != nil {
 							logger.Warn("failed to handle ChatMessage", zap.Error(err))
 							allMessagesProcessed = false
@@ -2600,6 +2657,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						p := msg.ParsedMessage.Interface().(protobuf.PairInstallation)
 						logger.Debug("Handling PairInstallation", zap.Any("message", p))
 						err = m.handler.HandlePairInstallation(messageState, p)
+						logger.Debug("handled pair installation")
 						if err != nil {
 							logger.Warn("failed to handle PairInstallation", zap.Error(err))
 							allMessagesProcessed = false
@@ -2615,6 +2673,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						p := msg.ParsedMessage.Interface().(protobuf.SyncInstallationContact)
 						logger.Debug("Handling SyncInstallationContact", zap.Any("message", p))
 						err = m.handler.HandleSyncInstallationContact(messageState, p)
+						logger.Debug("handled sync installation contact")
 						if err != nil {
 							logger.Warn("failed to handle SyncInstallationContact", zap.Error(err))
 							allMessagesProcessed = false
@@ -2630,6 +2689,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						p := msg.ParsedMessage.Interface().(protobuf.SyncInstallationPublicChat)
 						logger.Debug("Handling SyncInstallationPublicChat", zap.Any("message", p))
 						added := m.handler.HandleSyncInstallationPublicChat(messageState, p)
+						logger.Debug("handled sync installation public chat")
 
 						// We re-register as we want to receive mentions from the newly joined public chat
 						if added {
@@ -2647,6 +2707,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						command := msg.ParsedMessage.Interface().(protobuf.RequestAddressForTransaction)
 						logger.Debug("Handling RequestAddressForTransaction", zap.Any("message", command))
 						err = m.handler.HandleRequestAddressForTransaction(messageState, command)
+						logger.Debug("handled requset address for transaction")
 						if err != nil {
 							logger.Warn("failed to handle RequestAddressForTransaction", zap.Error(err))
 							allMessagesProcessed = false
@@ -2657,6 +2718,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						command := msg.ParsedMessage.Interface().(protobuf.SendTransaction)
 						logger.Debug("Handling SendTransaction", zap.Any("message", command))
 						err = m.handler.HandleSendTransaction(messageState, command)
+						logger.Debug("handled send transaction")
 						if err != nil {
 							logger.Warn("failed to handle SendTransaction", zap.Error(err))
 							allMessagesProcessed = false
@@ -2667,6 +2729,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						command := msg.ParsedMessage.Interface().(protobuf.AcceptRequestAddressForTransaction)
 						logger.Debug("Handling AcceptRequestAddressForTransaction")
 						err = m.handler.HandleAcceptRequestAddressForTransaction(messageState, command)
+						logger.Debug("handled accept reqauest address for transaction")
 						if err != nil {
 							logger.Warn("failed to handle AcceptRequestAddressForTransaction", zap.Error(err))
 							allMessagesProcessed = false
@@ -2677,6 +2740,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						command := msg.ParsedMessage.Interface().(protobuf.DeclineRequestAddressForTransaction)
 						logger.Debug("Handling DeclineRequestAddressForTransaction")
 						err = m.handler.HandleDeclineRequestAddressForTransaction(messageState, command)
+						logger.Debug("handled  decline request address for transaction")
 						if err != nil {
 							logger.Warn("failed to handle DeclineRequestAddressForTransaction", zap.Error(err))
 							allMessagesProcessed = false
@@ -2687,6 +2751,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						command := msg.ParsedMessage.Interface().(protobuf.DeclineRequestTransaction)
 						logger.Debug("Handling DeclineRequestTransaction")
 						err = m.handler.HandleDeclineRequestTransaction(messageState, command)
+						logger.Debug("handled  decline request for transaction")
 						if err != nil {
 							logger.Warn("failed to handle DeclineRequestTransaction", zap.Error(err))
 							allMessagesProcessed = false
@@ -2697,6 +2762,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						command := msg.ParsedMessage.Interface().(protobuf.RequestTransaction)
 						logger.Debug("Handling RequestTransaction")
 						err = m.handler.HandleRequestTransaction(messageState, command)
+						logger.Debug("handled  request for transaction")
 						if err != nil {
 							logger.Warn("failed to handle RequestTransaction", zap.Error(err))
 							allMessagesProcessed = false
@@ -2707,6 +2773,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						logger.Debug("Handling ContactUpdate")
 						contactUpdate := msg.ParsedMessage.Interface().(protobuf.ContactUpdate)
 						err = m.handler.HandleContactUpdate(messageState, contactUpdate)
+						logger.Debug("handled  contact update")
 						if err != nil {
 							logger.Warn("failed to handle ContactUpdate", zap.Error(err))
 							allMessagesProcessed = false
@@ -2734,6 +2801,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 							allMessagesProcessed = false
 							logger.Warn("failed to handle PushNotificationRegistrationResponse", zap.Error(err))
 						}
+						logger.Debug("handled PushNotificationRegistrationResponse")
 						// We continue in any case, no changes to messenger
 						continue
 					case protobuf.ContactCodeAdvertisement:
@@ -2760,6 +2828,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 							logger.Warn("failed to handle ContactCodeAdvertisement", zap.Error(err))
 						}
 
+						logger.Debug("Handled ContactCodeAdvertisement")
 						// We continue in any case, no changes to messenger
 						continue
 
@@ -2774,6 +2843,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 							logger.Warn("failed to handle PushNotificationResponse", zap.Error(err))
 						}
 						// We continue in any case, no changes to messenger
+						logger.Debug("Handled push notification response")
 						continue
 
 					case protobuf.PushNotificationQueryResponse:
@@ -2786,6 +2856,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 							allMessagesProcessed = false
 							logger.Warn("failed to handle PushNotificationQueryResponse", zap.Error(err))
 						}
+						logger.Debug("Handled push notification query response")
 						// We continue in any case, no changes to messenger
 						continue
 
@@ -2799,11 +2870,13 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 							allMessagesProcessed = false
 							logger.Warn("failed to handle PushNotificationRequest", zap.Error(err))
 						}
+						logger.Debug("Handled push notification request")
 						// We continue in any case, no changes to messenger
 						continue
 					case protobuf.EmojiReaction:
 						logger.Debug("Handling EmojiReaction")
 						err = m.handler.HandleEmojiReaction(messageState, msg.ParsedMessage.Interface().(protobuf.EmojiReaction))
+						logger.Debug("Handled emoji reaction")
 						if err != nil {
 							logger.Warn("failed to handle EmojiReaction", zap.Error(err))
 							allMessagesProcessed = false
@@ -2812,6 +2885,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 					case protobuf.GroupChatInvitation:
 						logger.Debug("Handling GroupChatInvitation")
 						err = m.handler.HandleGroupChatInvitation(messageState, msg.ParsedMessage.Interface().(protobuf.GroupChatInvitation))
+						logger.Debug("Handled group chat invitation")
 						if err != nil {
 							logger.Warn("failed to handle GroupChatInvitation", zap.Error(err))
 							allMessagesProcessed = false
@@ -2820,6 +2894,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 					case protobuf.ChatIdentity:
 						logger.Debug("Received ChatIdentity")
 						err = m.handler.HandleChatIdentity(messageState, msg.ParsedMessage.Interface().(protobuf.ChatIdentity))
+						logger.Debug("handled chat identity")
 						if err != nil {
 							logger.Warn("failed to handle ChatIdentity", zap.Error(err))
 							allMessagesProcessed = false
@@ -2829,6 +2904,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 					case protobuf.CommunityDescription:
 						logger.Debug("Handling CommunityDescription")
 						err = m.handler.HandleCommunityDescription(messageState, publicKey, msg.ParsedMessage.Interface().(protobuf.CommunityDescription), msg.DecryptedPayload)
+						logger.Debug("handled community descritpion")
 						if err != nil {
 							logger.Warn("failed to handle CommunityDescription", zap.Error(err))
 							allMessagesProcessed = false
@@ -2838,6 +2914,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						logger.Debug("Handling CommunityInvitation")
 						invitation := msg.ParsedMessage.Interface().(protobuf.CommunityInvitation)
 						err = m.handler.HandleCommunityInvitation(messageState, publicKey, invitation, invitation.CommunityDescription)
+						logger.Debug("handled community invitation")
 						if err != nil {
 							logger.Warn("failed to handle CommunityInvitation", zap.Error(err))
 							allMessagesProcessed = false
@@ -2847,12 +2924,14 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						logger.Debug("Handling CommunityRequestToJoin")
 						request := msg.ParsedMessage.Interface().(protobuf.CommunityRequestToJoin)
 						err = m.handler.HandleCommunityRequestToJoin(messageState, publicKey, request)
+						logger.Debug("handled community request to join")
 						if err != nil {
 							logger.Warn("failed to handle CommunityRequestToJoin", zap.Error(err))
 							continue
 						}
 
 					default:
+						logger.Debug("default case")
 						// Check if is an encrypted PushNotificationRegistration
 						if msg.Type == protobuf.ApplicationMetadataMessage_PUSH_NOTIFICATION_REGISTRATION {
 							logger.Debug("Received PushNotificationRegistration")
@@ -2876,8 +2955,10 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 				}
 			}
 
+			logger.Debug("processing communityt changes")
 			// Process any community changes
 			for _, changes := range messageState.Response.CommunityChanges {
+				logger.Debug("processing community change")
 				if changes.ShouldMemberJoin {
 					response, err := m.joinCommunity(changes.Community.ID())
 					if err != nil {
@@ -2904,8 +2985,10 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 					}
 
 				}
+				logger.Debug("processed community change")
 			}
 
+			logger.Debug("processed community changes")
 			// Clean up as not used by clients currently
 			messageState.Response.CommunityChanges = nil
 
@@ -2914,13 +2997,16 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 			}
 		}
 
+		logger.Debug("confirming messages processed")
 		if len(processedMessages) != 0 {
 			if err := m.transport.ConfirmMessagesProcessed(processedMessages, m.getTimesource().GetCurrentTime()); err != nil {
 				logger.Warn("failed to confirm processed messages", zap.Error(err))
 			}
 		}
+		logger.Debug("confirmed messages processed")
 	}
 
+	logger.Debug("processed messages")
 	var contactsToSave []*Contact
 	for id := range messageState.ModifiedContacts {
 		contact := messageState.AllContacts[id]
@@ -2934,10 +3020,12 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 			}
 		}
 	}
+	logger.Debug("addedd contacts to response")
 
 	for _, filter := range messageState.AllFilters {
 		messageState.Response.Filters = append(messageState.Response.Filters, filter)
 	}
+	logger.Debug("addedd filters to response")
 
 	// Hydrate chat alias and identicon
 	for id := range messageState.Response.chats {
@@ -2952,6 +3040,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 
 		messageState.Response.AddChat(chat)
 	}
+	logger.Debug("addedd  chats to response")
 
 	for id := range messageState.ModifiedInstallations {
 		installation := messageState.AllInstallations[id]
@@ -2964,6 +3053,8 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 		}
 	}
 
+	logger.Debug("addedd installations to response")
+
 	var err error
 	if len(messageState.Response.chats) > 0 {
 		err = m.saveChats(messageState.Response.Chats())
@@ -2971,6 +3062,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 			return nil, err
 		}
 	}
+	logger.Debug("saved chats")
 
 	if len(messageState.Response.Messages) > 0 {
 		err = m.SaveMessages(messageState.Response.Messages)
@@ -2978,14 +3070,19 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 			return nil, err
 		}
 	}
+	logger.Debug("saved messages")
 
 	for _, emojiReaction := range messageState.EmojiReactions {
 		messageState.Response.EmojiReactions = append(messageState.Response.EmojiReactions, emojiReaction)
 	}
 
+	logger.Debug("saved emoji reactions")
+
 	for _, groupChatInvitation := range messageState.GroupChatInvitations {
 		messageState.Response.Invitations = append(messageState.Response.Invitations, groupChatInvitation)
 	}
+
+	logger.Debug("added invitations")
 
 	if len(contactsToSave) > 0 {
 		err = m.persistence.SaveContacts(contactsToSave)
@@ -2993,6 +3090,8 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 			return nil, err
 		}
 	}
+
+	logger.Debug("saved comntacts")
 
 	newMessagesIds := map[string]struct{}{}
 	for _, message := range messageState.Response.Messages {
@@ -3003,11 +3102,16 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 	if err != nil {
 		return nil, err
 	}
+
+	logger.Debug("pulled messages from db")
+
 	messagesByID := map[string]*common.Message{}
 	for _, message := range messagesWithResponses {
 		messagesByID[message.ID] = message
 	}
 	messageState.Response.Messages = messagesWithResponses
+
+	logger.Debug("added messages to response")
 
 	for _, message := range messageState.Response.Messages {
 		if _, ok := newMessagesIds[message.ID]; ok {
@@ -3019,9 +3123,12 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 			}
 		}
 	}
+	logger.Debug("added notifications")
 
 	// Reset installations
 	m.modifiedInstallations = make(map[string]bool)
+
+	logger.Debug("sending back response")
 
 	return messageState.Response, nil
 }
@@ -3092,12 +3199,15 @@ func (m *Messenger) MessagesExist(ids []string) (map[string]bool, error) {
 }
 
 func (m *Messenger) MessageByChatID(chatID, cursor string, limit int) ([]*common.Message, string, error) {
+	m.logger.Debug("called chat message by chat id")
 	chat, err := m.persistence.Chat(chatID)
 	if err != nil {
 		return nil, "", err
 	}
+	m.logger.Debug("fetched chat")
 
 	if chat.Timeline() {
+		m.logger.Debug("timeline chat")
 		var chatIDs = []string{"@" + contactIDFromPublicKey(&m.identity.PublicKey)}
 		contacts, err := m.persistence.Contacts()
 		if err != nil {
@@ -3108,9 +3218,15 @@ func (m *Messenger) MessageByChatID(chatID, cursor string, limit int) ([]*common
 				chatIDs = append(chatIDs, "@"+contact.ID)
 			}
 		}
-		return m.persistence.MessageByChatIDs(chatIDs, cursor, limit)
+		m.logger.Debug("timeline chat processed")
+		a, b, c := m.persistence.MessageByChatIDs(chatIDs, cursor, limit)
+		m.logger.Debug("fetched timeline chat messages")
+		return a, b, c
 	}
-	return m.persistence.MessageByChatID(chatID, cursor, limit)
+	m.logger.Debug("fetching messages")
+	a, b, c := m.persistence.MessageByChatID(chatID, cursor, limit)
+	m.logger.Debug("fetched messages")
+	return a, b, c
 }
 
 func (m *Messenger) SaveMessages(messages []*common.Message) error {

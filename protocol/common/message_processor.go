@@ -495,38 +495,50 @@ func (p *MessageProcessor) HandleMessages(shhMessage *types.Message, application
 	var statusMessage v1protocol.StatusMessage
 	var statusMessages []*v1protocol.StatusMessage
 
+	logger.Debug("Handling transport")
 	err := statusMessage.HandleTransport(shhMessage)
+	logger.Debug("handled transport")
 	if err != nil {
 		hlogger.Error("failed to handle transport layer message", zap.Error(err))
 		return nil, nil, err
 	}
 
+	logger.Debug("handling encryption")
 	err = p.handleEncryptionLayer(context.Background(), &statusMessage)
+	logger.Debug("handled encryption")
 	if err != nil {
 		hlogger.Debug("failed to handle an encryption message", zap.Error(err))
 	}
 
+	logger.Debug("unwrapping datasync")
 	statusMessages, acks, err := unwrapDatasyncMessage(&statusMessage, p.datasync)
+	logger.Debug("unwrapped datasync")
 	if err != nil {
 		hlogger.Debug("failed to handle datasync message", zap.Error(err))
 		//that wasn't a datasync message, so use the original payload
 		statusMessages = append(statusMessages, &statusMessage)
 	}
 
+	logger.Debug("handling unwrapped")
 	for _, statusMessage := range statusMessages {
+		logger.Debug("handling application metadata")
 		err := statusMessage.HandleApplicationMetadata()
+		logger.Debug("handled application metadata")
 		if err != nil {
 			hlogger.Error("failed to handle application metadata layer message", zap.Error(err))
 		}
 
+		logger.Debug("handling application")
 		if applicationLayer {
 			err = statusMessage.HandleApplication()
 			if err != nil {
 				hlogger.Error("failed to handle application layer message", zap.Error(err))
 			}
 		}
+		logger.Debug("handled application")
 	}
 
+	logger.Debug("handled all processed messages")
 	return statusMessages, acks, nil
 }
 

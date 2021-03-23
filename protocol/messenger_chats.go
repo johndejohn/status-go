@@ -10,14 +10,18 @@ import (
 )
 
 func (m *Messenger) Chats() []*Chat {
+	m.logger.Debug("Locking for chats")
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
+	m.logger.Debug("locked for chats")
 	var chats []*Chat
 
 	for _, c := range m.allChats {
 		chats = append(chats, c)
 	}
+
+	m.logger.Debug("got chats")
 
 	return chats
 }
