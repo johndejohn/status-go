@@ -132,7 +132,7 @@ func NewZapLoggerWithAdapter(logger log.Logger) (*zap.Logger, error) {
 
 	cfg := zap.Config{
 		Level:            zap.NewAtomicLevelAt(zapcore.DebugLevel),
-		Development:      false,
+		Development:      true,
 		Sampling:         nil,
 		Encoding:         "json-hex",
 		EncoderConfig:    zap.NewProductionEncoderConfig(),
