@@ -841,7 +841,7 @@ func _1618395756_contacts_onlyUpSql() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "1618395756_contacts_only.up.sql", size: 136, mode: os.FileMode(0644), modTime: time.Unix(1618577521, 0)}
+	info := bindataFileInfo{name: "1618395756_contacts_only.up.sql", size: 136, mode: os.FileMode(0644), modTime: time.Unix(1618850598, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x1, 0xe3, 0xd0, 0xe7, 0xf2, 0x6e, 0xbf, 0x27, 0xf6, 0xe2, 0x2e, 0x16, 0x4b, 0x52, 0x3b, 0xcf, 0x63, 0x52, 0xfc, 0x1d, 0x43, 0xba, 0x42, 0xf9, 0x1e, 0x1e, 0x39, 0x40, 0xed, 0x0, 0x20, 0xa8}}
 	return a, nil
 }

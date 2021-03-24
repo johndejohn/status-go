@@ -27,6 +27,7 @@
 // 1614152139_add_communities_request_to_join.up.sql (831B)
 // 1615374373_add_confirmations.up.sql (227B)
 // 1617694931_add_notification_center.up.sql (572B)
+// 1618850605_create_pin_messages.up.sql (288B)
 // README.md (554B)
 // doc.go (850B)
 
@@ -632,8 +633,28 @@ func _1617694931_add_notification_centerUpSql() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "1617694931_add_notification_center.up.sql", size: 572, mode: os.FileMode(0644), modTime: time.Unix(1618594380, 0)}
+	info := bindataFileInfo{name: "1617694931_add_notification_center.up.sql", size: 572, mode: os.FileMode(0644), modTime: time.Unix(1618850598, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x10, 0x45, 0xc6, 0xc9, 0x73, 0xbb, 0x1f, 0xda, 0xa3, 0x4d, 0x19, 0x98, 0x85, 0x2d, 0xca, 0xda, 0xcc, 0x3b, 0x32, 0xff, 0xc7, 0x7b, 0xe3, 0x9f, 0x9b, 0x2a, 0x93, 0xf5, 0xdf, 0x65, 0x38, 0x91}}
+	return a, nil
+}
+
+var __1618850605_create_pin_messagesUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x7c\xcd\xc1\x4a\xc4\x30\x18\x04\xe0\x7b\x9e\x62\x8e\x0a\xbe\x81\xa7\x6c\xf8\x57\x83\x31\x59\xb2\x51\xec\x29\x84\x34\xd8\x60\xda\x06\x53\xf5\xf5\x45\x91\xd2\x22\xec\xf1\xe7\x9b\xf9\x47\x58\xe2\x8e\xe0\xf8\x41\x11\xe4\x11\xda\x38\xd0\x8b\x3c\xbb\x33\x6a\x9e\xfc\x98\x5a\x0b\xaf\xa9\xe1\x8a\x01\x7f\x87\xcf\x3d\x9e\xb9\x15\xf7\xdc\xe2\x64\xe5\x23\xb7\x1d\x1e\xa8\xfb\xad\xea\x27\xa5\x60\x34\x84\xd1\x47\x25\x85\x83\xa5\x93\xe2\x82\x6e\x18\xf0\x35\xe4\x56\xd3\xbb\x5f\xf2\x98\xda\x12\xc6\x0a\xa9\x1d\xdd\x91\x5d\x9b\x3f\xa9\x9d\xee\x24\x0e\x61\xd9\x6e\x6f\xad\xcc\x31\x14\x7f\x29\x11\xcb\x1c\xdf\xfc\x67\x28\x1f\xe9\xdf\xe7\x9a\xa7\x29\xf5\x38\x18\xa3\x88\xeb\x95\xd8\xf5\x2d\xfb\x0e\x00\x00\xff\xff\xe7\x0a\x32\xca\x20\x01\x00\x00")
+
+func _1618850605_create_pin_messagesUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1618850605_create_pin_messagesUpSql,
+		"1618850605_create_pin_messages.up.sql",
+	)
+}
+
+func _1618850605_create_pin_messagesUpSql() (*asset, error) {
+	bytes, err := _1618850605_create_pin_messagesUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1618850605_create_pin_messages.up.sql", size: 288, mode: os.FileMode(0644), modTime: time.Unix(1618850599, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xda, 0xaf, 0xc3, 0x43, 0x80, 0x78, 0x61, 0x1, 0x71, 0x32, 0x12, 0x64, 0xf3, 0x9e, 0x2d, 0x3e, 0x17, 0x4d, 0x7, 0x1c, 0x41, 0xe9, 0x4f, 0x8e, 0x33, 0xe5, 0x61, 0x13, 0x18, 0x23, 0x13, 0x28}}
 	return a, nil
 }
 
@@ -822,6 +843,8 @@ var _bindata = map[string]func() (*asset, error){
 
 	"1617694931_add_notification_center.up.sql": _1617694931_add_notification_centerUpSql,
 
+	"1618850605_create_pin_messages.up.sql": _1618850605_create_pin_messagesUpSql,
+
 	"README.md": readmeMd,
 
 	"doc.go": docGo,
@@ -895,8 +918,9 @@ var _bintree = &bintree{nil, map[string]*bintree{
 	"1614152139_add_communities_request_to_join.up.sql":           &bintree{_1614152139_add_communities_request_to_joinUpSql, map[string]*bintree{}},
 	"1615374373_add_confirmations.up.sql":                         &bintree{_1615374373_add_confirmationsUpSql, map[string]*bintree{}},
 	"1617694931_add_notification_center.up.sql":                   &bintree{_1617694931_add_notification_centerUpSql, map[string]*bintree{}},
-	"README.md": &bintree{readmeMd, map[string]*bintree{}},
-	"doc.go":    &bintree{docGo, map[string]*bintree{}},
+	"1618850605_create_pin_messages.up.sql":                       &bintree{_1618850605_create_pin_messagesUpSql, map[string]*bintree{}},
+	"README.md":                                                   &bintree{readmeMd, map[string]*bintree{}},
+	"doc.go":                                                      &bintree{docGo, map[string]*bintree{}},
 }}
 
 // RestoreAsset restores an asset under the given directory.
