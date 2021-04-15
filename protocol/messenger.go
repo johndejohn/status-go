@@ -1748,10 +1748,6 @@ func (m *Messenger) LeaveGroupChat(ctx context.Context, chatID string, remove bo
 		return nil, ErrChatNotFound
 	}
 
-	err := m.Leave(*chat)
-	if err != nil {
-		return nil, err
-	}
 	joined := chat.HasJoinedMember(common.PubkeyToHex(&m.identity.PublicKey))
 
 	if joined {
