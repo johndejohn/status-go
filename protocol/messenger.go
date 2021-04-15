@@ -2345,6 +2345,8 @@ func (m *Messenger) RetrieveAll() (*MessengerResponse, error) {
 		return nil, err
 	}
 
+	m.logger.Info("Retrieving messages")
+
 	return m.handleRetrievedMessages(chatWithMessages)
 }
 
