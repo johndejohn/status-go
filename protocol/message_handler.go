@@ -9,6 +9,7 @@ import (
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/images"
+	"github.com/status-im/status-go/multiaccounts/accounts"
 	"github.com/status-im/status-go/protocol/common"
 	"github.com/status-im/status-go/protocol/communities"
 	"github.com/status-im/status-go/protocol/encryption/multidevice"
@@ -26,20 +27,24 @@ const (
 	requestAddressForTransactionDeclinedMessage = "Request address for transaction declined"
 )
 
+var ErrMessageNotAllowed = errors.New("message from a non-contact")
+
 type MessageHandler struct {
 	identity           *ecdsa.PrivateKey
 	persistence        *sqlitePersistence
+	settings           *accounts.Database
 	transport          transport.Transport
 	ensVerifier        *ens.Verifier
 	communitiesManager *communities.Manager
 	logger             *zap.Logger
 }
 
-func newMessageHandler(identity *ecdsa.PrivateKey, logger *zap.Logger, persistence *sqlitePersistence, communitiesManager *communities.Manager, transport transport.Transport, ensVerifier *ens.Verifier) *MessageHandler {
+func newMessageHandler(identity *ecdsa.PrivateKey, logger *zap.Logger, persistence *sqlitePersistence, communitiesManager *communities.Manager, transport transport.Transport, ensVerifier *ens.Verifier, settings *accounts.Database) *MessageHandler {
 	return &MessageHandler{
 		identity:           identity,
 		persistence:        persistence,
 		communitiesManager: communitiesManager,
+		settings:           settings,
 		ensVerifier:        ensVerifier,
 		transport:          transport,
 		logger:             logger}
@@ -48,7 +53,7 @@ func newMessageHandler(identity *ecdsa.PrivateKey, logger *zap.Logger, persisten
 // HandleMembershipUpdate updates a Chat instance according to the membership updates.
 // It retrieves chat, if exists, and merges membership updates from the message.
 // Finally, the Chat is updated with the new group events.
-func (m *MessageHandler) HandleMembershipUpdate(messageState *ReceivedMessageState, chat *Chat, rawMembershipUpdate protobuf.MembershipUpdateMessage, translations map[protobuf.MembershipUpdateEvent_EventType]string) error {
+func (m *MessageHandler) HandleMembershipUpdate(messageState *ReceivedMessageState, chat *Chat, rawMembershipUpdate protobuf.MembershipUpdateMessage, translations *systemMessageTranslationsMap) error {
 	var group *v1protocol.Group
 	var err error
 
@@ -63,6 +68,15 @@ func (m *MessageHandler) HandleMembershipUpdate(messageState *ReceivedMessageSta
 	if err := ValidateMembershipUpdateMessage(message, messageState.Timesource.GetCurrentTime()); err != nil {
 		logger.Warn("failed to validate message", zap.Error(err))
 		return err
+	}
+
+	allowed, err := m.isMessageAllowedFrom(messageState.AllContacts, messageState.CurrentMessageState.Contact.ID, chat)
+	if err != nil {
+		return err
+	}
+
+	if !allowed {
+		return ErrMessageNotAllowed
 	}
 
 	//if chat.InvitationAdmin exists means we are waiting for invitation request approvement, and in that case
@@ -102,11 +116,16 @@ func (m *MessageHandler) HandleMembershipUpdate(messageState *ReceivedMessageSta
 			return err
 		}
 
+		ourKey := contactIDFromPublicKey(&m.identity.PublicKey)
 		// A new chat must contain us
-		if !group.IsMember(contactIDFromPublicKey(&m.identity.PublicKey)) {
+		if !group.IsMember(ourKey) {
 			return errors.New("can't create a new group chat without us being a member")
 		}
 		newChat := CreateGroupChat(messageState.Timesource)
+		// We set group chat inactive and create a notification instead
+		// unless is coming from us or a contact
+		isActive := messageState.CurrentMessageState.Contact.IsAdded() || messageState.CurrentMessageState.Contact.ID == ourKey
+		newChat.Active = isActive
 		chat = &newChat
 	} else {
 		existingGroup, err := newProtocolGroupFromChat(chat)
@@ -124,7 +143,22 @@ func (m *MessageHandler) HandleMembershipUpdate(messageState *ReceivedMessageSta
 		}
 	}
 
-	chat.updateChatFromGroupMembershipChanges(contactIDFromPublicKey(&m.identity.PublicKey), group)
+	chat.updateChatFromGroupMembershipChanges(group)
+
+	if !chat.Active {
+		notification := &ActivityCenterNotification{
+			ID:          types.FromHex(chat.ID),
+			Name:        chat.Name,
+			LastMessage: chat.LastMessage,
+			Type:        ActivityCenterNotificationTypeNewPrivateGroupChat,
+			Timestamp:   messageState.CurrentMessageState.WhisperTimestamp,
+			ChatID:      chat.ID,
+		}
+		err := m.addActivityCenterNotification(messageState, notification)
+		if err != nil {
+			m.logger.Warn("failed to create activity center notification", zap.Error(err))
+		}
+	}
 
 	systemMessages := buildSystemMessages(message.Events, translations)
 
@@ -140,9 +174,9 @@ func (m *MessageHandler) HandleMembershipUpdate(messageState *ReceivedMessageSta
 		messageState.Response.Messages = append(messageState.Response.Messages, message)
 	}
 
-	// Store in chats map as it might be a new one
-	messageState.AllChats[chat.ID] = chat
 	messageState.Response.AddChat(chat)
+	// Store in chats map as it might be a new one
+	messageState.AllChats.Store(chat.ID, chat)
 
 	if message.Message != nil {
 		messageState.CurrentMessageState.Message = *message.Message
@@ -165,9 +199,18 @@ func (m *MessageHandler) handleCommandMessage(state *ReceivedMessageState, messa
 	if err := message.PrepareContent(); err != nil {
 		return fmt.Errorf("failed to prepare content: %v", err)
 	}
-	chat, err := m.matchChatEntity(message, state.AllChats, state.Timesource)
+	chat, err := m.matchChatEntity(message, state.AllChats, state.AllContacts, state.Timesource)
 	if err != nil {
 		return err
+	}
+
+	allowed, err := m.isMessageAllowedFrom(state.AllContacts, state.CurrentMessageState.Contact.ID, chat)
+	if err != nil {
+		return err
+	}
+
+	if !allowed {
+		return ErrMessageNotAllowed
 	}
 
 	// If deleted-at is greater, ignore message
@@ -178,7 +221,7 @@ func (m *MessageHandler) handleCommandMessage(state *ReceivedMessageState, messa
 	// Set the LocalChatID for the message
 	message.LocalChatID = chat.ID
 
-	if c, ok := state.AllChats[chat.ID]; ok {
+	if c, ok := state.AllChats.Load(chat.ID); ok {
 		chat = c
 	}
 
@@ -199,28 +242,42 @@ func (m *MessageHandler) handleCommandMessage(state *ReceivedMessageState, messa
 		return err
 	}
 
-	// Set chat active
-	chat.Active = true
-	// Set in the modified maps chat
-	state.Response.AddChat(chat)
-	state.AllChats[chat.ID] = chat
+	if !chat.Active {
+		notification := &ActivityCenterNotification{
+			ID:          types.FromHex(chat.ID),
+			Type:        ActivityCenterNotificationTypeNewOneToOne,
+			Name:        chat.Name,
+			LastMessage: chat.LastMessage,
+			Timestamp:   state.CurrentMessageState.WhisperTimestamp,
+			ChatID:      chat.ID,
+		}
+		err := m.addActivityCenterNotification(state, notification)
+		if err != nil {
+			m.logger.Warn("failed to save notification", zap.Error(err))
+		}
+	}
 
 	// Add to response
+	state.Response.AddChat(chat)
 	if message != nil {
 		state.Response.Messages = append(state.Response.Messages, message)
 	}
+
+	// Set in the modified maps chat
+	state.AllChats.Store(chat.ID, chat)
+
 	return nil
 }
 
 func (m *MessageHandler) HandleSyncInstallationContact(state *ReceivedMessageState, message protobuf.SyncInstallationContact) error {
-	chat, ok := state.AllChats[state.CurrentMessageState.Contact.ID]
+	chat, ok := state.AllChats.Load(state.CurrentMessageState.Contact.ID)
 	if !ok {
 		chat = OneToOneFromPublicKey(state.CurrentMessageState.PublicKey, state.Timesource)
 		// We don't want to show the chat to the user
 		chat.Active = false
 	}
 
-	contact, ok := state.AllContacts[message.Id]
+	contact, ok := state.AllContacts.Load(message.Id)
 	if !ok {
 		var err error
 		contact, err = buildContactFromPkString(message.Id)
@@ -240,25 +297,26 @@ func (m *MessageHandler) HandleSyncInstallationContact(state *ReceivedMessageSta
 		contact.LastUpdated = message.Clock
 		contact.LocalNickname = message.LocalNickname
 
-		state.ModifiedContacts[contact.ID] = true
-		state.AllContacts[contact.ID] = contact
+		state.ModifiedContacts.Store(contact.ID, true)
+		state.AllContacts.Store(contact.ID, contact)
 	}
 
-	state.AllChats[chat.ID] = chat
+	// TODO(samyoul) remove storing of an updated reference pointer?
+	state.AllChats.Store(chat.ID, chat)
 
 	return nil
 }
 
 func (m *MessageHandler) HandleSyncInstallationPublicChat(state *ReceivedMessageState, message protobuf.SyncInstallationPublicChat) bool {
 	chatID := message.Id
-	_, ok := state.AllChats[chatID]
+	_, ok := state.AllChats.Load(chatID)
 	if ok {
 		return false
 	}
 
 	chat := CreatePublicChat(chatID, state.Timesource)
 
-	state.AllChats[chat.ID] = chat
+	state.AllChats.Store(chat.ID, chat)
 	state.Response.AddChat(chat)
 
 	return true
@@ -267,7 +325,16 @@ func (m *MessageHandler) HandleSyncInstallationPublicChat(state *ReceivedMessage
 func (m *MessageHandler) HandleContactUpdate(state *ReceivedMessageState, message protobuf.ContactUpdate) error {
 	logger := m.logger.With(zap.String("site", "HandleContactUpdate"))
 	contact := state.CurrentMessageState.Contact
-	chat, ok := state.AllChats[contact.ID]
+	chat, ok := state.AllChats.Load(contact.ID)
+
+	allowed, err := m.isMessageAllowedFrom(state.AllContacts, state.CurrentMessageState.Contact.ID, chat)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return ErrMessageNotAllowed
+	}
+
 	if !ok {
 		chat = OneToOneFromPublicKey(state.CurrentMessageState.PublicKey, state.Timesource)
 		// We don't want to show the chat to the user
@@ -286,8 +353,8 @@ func (m *MessageHandler) HandleContactUpdate(state *ReceivedMessageState, messag
 			contact.ENSVerified = false
 		}
 		contact.LastUpdated = message.Clock
-		state.ModifiedContacts[contact.ID] = true
-		state.AllContacts[contact.ID] = contact
+		state.ModifiedContacts.Store(contact.ID, true)
+		state.AllContacts.Store(contact.ID, contact)
 	}
 
 	if chat.LastClockValue < message.Clock {
@@ -295,7 +362,8 @@ func (m *MessageHandler) HandleContactUpdate(state *ReceivedMessageState, messag
 	}
 
 	state.Response.AddChat(chat)
-	state.AllChats[chat.ID] = chat
+	// TODO(samyoul) remove storing of an updated reference pointer?
+	state.AllChats.Store(chat.ID, chat)
 
 	return nil
 }
@@ -307,7 +375,7 @@ func (m *MessageHandler) HandlePairInstallation(state *ReceivedMessageState, mes
 		return err
 	}
 
-	installation, ok := state.AllInstallations[message.InstallationId]
+	installation, ok := state.AllInstallations.Load(message.InstallationId)
 	if !ok {
 		return errors.New("installation not found")
 	}
@@ -318,8 +386,9 @@ func (m *MessageHandler) HandlePairInstallation(state *ReceivedMessageState, mes
 	}
 
 	installation.InstallationMetadata = metadata
-	state.AllInstallations[message.InstallationId] = installation
-	state.ModifiedInstallations[message.InstallationId] = true
+	// TODO(samyoul) remove storing of an updated reference pointer?
+	state.AllInstallations.Store(message.InstallationId, installation)
+	state.ModifiedInstallations.Store(message.InstallationId, true)
 
 	return nil
 }
@@ -347,16 +416,18 @@ func (m *MessageHandler) HandleCommunityDescription(state *ReceivedMessageState,
 	var chatIDs []string
 	for i, chat := range chats {
 
-		oldChat, ok := state.AllChats[chat.ID]
+		oldChat, ok := state.AllChats.Load(chat.ID)
 		if !ok {
 			// Beware, don't use the reference in the range (i.e chat) as it's a shallow copy
-			state.AllChats[chat.ID] = chats[i]
+			state.AllChats.Store(chat.ID, chats[i])
 
 			state.Response.AddChat(chat)
 			chatIDs = append(chatIDs, chat.ID)
 			// Update name, currently is the only field is mutable
 		} else if oldChat.Name != chat.Name {
-			state.AllChats[chat.ID].Name = chat.Name
+			oldChat.Name = chat.Name
+			// TODO(samyoul) remove storing of an updated reference pointer?
+			state.AllChats.Store(chat.ID, oldChat)
 			state.Response.AddChat(chat)
 		}
 	}
@@ -421,7 +492,7 @@ func (m *MessageHandler) HandleCommunityRequestToJoin(state *ReceivedMessageStat
 
 	contactID := contactIDFromPublicKey(signer)
 
-	contact := state.AllContacts[contactID]
+	contact, _ := state.AllContacts.Load(contactID)
 
 	state.Response.AddNotification(NewCommunityRequestToJoinNotification(requestToJoin.ID.String(), community, contact))
 
@@ -453,9 +524,18 @@ func (m *MessageHandler) HandleChatMessage(state *ReceivedMessageState) error {
 	if err != nil {
 		return fmt.Errorf("failed to prepare message content: %v", err)
 	}
-	chat, err := m.matchChatEntity(receivedMessage, state.AllChats, state.Timesource)
+	chat, err := m.matchChatEntity(receivedMessage, state.AllChats, state.AllContacts, state.Timesource)
 	if err != nil {
 		return err // matchChatEntity returns a descriptive error message
+	}
+
+	allowed, err := m.isMessageAllowedFrom(state.AllContacts, state.CurrentMessageState.Contact.ID, chat)
+	if err != nil {
+		return err
+	}
+
+	if !allowed {
+		return ErrMessageNotAllowed
 	}
 
 	// It looks like status-react created profile chats as public chats
@@ -479,7 +559,7 @@ func (m *MessageHandler) HandleChatMessage(state *ReceivedMessageState) error {
 	// Set the LocalChatID for the message
 	receivedMessage.LocalChatID = chat.ID
 
-	if c, ok := state.AllChats[chat.ID]; ok {
+	if c, ok := state.AllChats.Load(chat.ID); ok {
 		chat = c
 	}
 
@@ -499,11 +579,25 @@ func (m *MessageHandler) HandleChatMessage(state *ReceivedMessageState) error {
 		return err
 	}
 
-	// Set chat active
-	chat.Active = true
+	// If the chat is not active, create a notification in the center
+	if chat.OneToOne() && !chat.Active {
+		notification := &ActivityCenterNotification{
+			ID:          types.FromHex(chat.ID),
+			Name:        chat.Name,
+			LastMessage: chat.LastMessage,
+			Type:        ActivityCenterNotificationTypeNewOneToOne,
+			Timestamp:   state.CurrentMessageState.WhisperTimestamp,
+			ChatID:      chat.ID,
+		}
+		err := m.addActivityCenterNotification(state, notification)
+		if err != nil {
+			m.logger.Warn("failed to create notification", zap.Error(err))
+		}
+	}
 	// Set in the modified maps chat
 	state.Response.AddChat(chat)
-	state.AllChats[chat.ID] = chat
+	// TODO(samyoul) remove storing of an updated reference pointer?
+	state.AllChats.Store(chat.ID, chat)
 
 	contact := state.CurrentMessageState.Contact
 	if receivedMessage.EnsName != "" {
@@ -514,8 +608,8 @@ func (m *MessageHandler) HandleChatMessage(state *ReceivedMessageState) error {
 			// If oldRecord is nil, a new verification process will take place
 			// so we reset the record
 			contact.ENSVerified = false
-			state.ModifiedContacts[contact.ID] = true
-			state.AllContacts[contact.ID] = contact
+			state.ModifiedContacts.Store(contact.ID, true)
+			state.AllContacts.Store(contact.ID, contact)
 		}
 	}
 
@@ -532,9 +626,19 @@ func (m *MessageHandler) HandleChatMessage(state *ReceivedMessageState) error {
 		state.Response.AddCommunity(community)
 		state.Response.CommunityChanges = append(state.Response.CommunityChanges, communityResponse.Changes)
 	}
-	// Add to response
+
 	state.Response.Messages = append(state.Response.Messages, receivedMessage)
 
+	return nil
+}
+
+func (m *MessageHandler) addActivityCenterNotification(state *ReceivedMessageState, notification *ActivityCenterNotification) error {
+	err := m.persistence.SaveActivityCenterNotification(notification)
+	if err != nil {
+		m.logger.Warn("failed to save notification", zap.Error(err))
+		return err
+	}
+	state.Response.AddActivityCenterNotification(notification)
 	return nil
 }
 
@@ -739,7 +843,7 @@ func (m *MessageHandler) HandleDeclineRequestTransaction(messageState *ReceivedM
 	return m.handleCommandMessage(messageState, oldMessage)
 }
 
-func (m *MessageHandler) matchChatEntity(chatEntity common.ChatEntity, chats map[string]*Chat, timesource common.TimeSource) (*Chat, error) {
+func (m *MessageHandler) matchChatEntity(chatEntity common.ChatEntity, chats *chatMap, contacts *contactMap, timesource common.TimeSource) (*Chat, error) {
 	if chatEntity.GetSigPubKey() == nil {
 		m.logger.Error("public key can't be empty")
 		return nil, errors.New("received a chatEntity with empty public key")
@@ -750,8 +854,8 @@ func (m *MessageHandler) matchChatEntity(chatEntity common.ChatEntity, chats map
 		// For public messages, all outgoing and incoming messages have the same chatID
 		// equal to a public chat name.
 		chatID := chatEntity.GetChatId()
-		chat := chats[chatID]
-		if chat == nil {
+		chat, ok := chats.Load(chatID)
+		if !ok {
 			return nil, errors.New("received a public chatEntity from non-existing chat")
 		}
 		return chat, nil
@@ -759,8 +863,8 @@ func (m *MessageHandler) matchChatEntity(chatEntity common.ChatEntity, chats map
 		// It's a private message coming from us so we rely on Message.ChatID
 		// If chat does not exist, it should be created to support multidevice synchronization.
 		chatID := chatEntity.GetChatId()
-		chat := chats[chatID]
-		if chat == nil {
+		chat, ok := chats.Load(chatID)
+		if !ok {
 			if len(chatID) != PubKeyStringLength {
 				return nil, errors.New("invalid pubkey length")
 			}
@@ -781,16 +885,21 @@ func (m *MessageHandler) matchChatEntity(chatEntity common.ChatEntity, chats map
 		// It's an incoming private chatEntity. ChatID is calculated from the signature.
 		// If a chat does not exist, a new one is created and saved.
 		chatID := contactIDFromPublicKey(chatEntity.GetSigPubKey())
-		chat := chats[chatID]
-		if chat == nil {
+		chat, ok := chats.Load(chatID)
+		if !ok {
 			// TODO: this should be a three-word name used in the mobile client
 			chat = CreateOneToOneChat(chatID[:8], chatEntity.GetSigPubKey(), timesource)
+			chat.Active = false
 		}
+		// We set the chat as inactive and will create a notification
+		// if it's not coming from a contact
+		contact, ok := contacts.Load(chatID)
+		chat.Active = chat.Active || (ok && contact.IsAdded())
 		return chat, nil
 	case chatEntity.GetMessageType() == protobuf.MessageType_COMMUNITY_CHAT:
 		chatID := chatEntity.GetChatId()
-		chat := chats[chatID]
-		if chat == nil {
+		chat, ok := chats.Load(chatID)
+		if !ok {
 			return nil, errors.New("received community chat chatEntity for non-existing chat")
 		}
 
@@ -818,8 +927,8 @@ func (m *MessageHandler) matchChatEntity(chatEntity common.ChatEntity, chats map
 		// In the case of a group chatEntity, ChatID is the same for all messages belonging to a group.
 		// It needs to be verified if the signature public key belongs to the chat.
 		chatID := chatEntity.GetChatId()
-		chat := chats[chatID]
-		if chat == nil {
+		chat, ok := chats.Load(chatID)
+		if !ok {
 			return nil, errors.New("received group chat chatEntity for non-existing chat")
 		}
 
@@ -892,7 +1001,7 @@ func (m *MessageHandler) HandleEmojiReaction(state *ReceivedMessageState, pbEmoj
 		return nil
 	}
 
-	chat, err := m.matchChatEntity(emojiReaction, state.AllChats, state.Timesource)
+	chat, err := m.matchChatEntity(emojiReaction, state.AllChats, state.AllContacts, state.Timesource)
 	if err != nil {
 		return err // matchChatEntity returns a descriptive error message
 	}
@@ -907,7 +1016,8 @@ func (m *MessageHandler) HandleEmojiReaction(state *ReceivedMessageState, pbEmoj
 	}
 
 	state.Response.AddChat(chat)
-	state.AllChats[chat.ID] = chat
+	// TODO(samyoul) remove storing of an updated reference pointer?
+	state.AllChats.Store(chat.ID, chat)
 
 	// save emoji reaction
 	err = m.persistence.SaveEmojiReaction(emojiReaction)
@@ -921,6 +1031,14 @@ func (m *MessageHandler) HandleEmojiReaction(state *ReceivedMessageState, pbEmoj
 }
 
 func (m *MessageHandler) HandleGroupChatInvitation(state *ReceivedMessageState, pbGHInvitations protobuf.GroupChatInvitation) error {
+	allowed, err := m.isMessageAllowedFrom(state.AllContacts, state.CurrentMessageState.Contact.ID, nil)
+	if err != nil {
+		return err
+	}
+
+	if !allowed {
+		return ErrMessageNotAllowed
+	}
 	logger := m.logger.With(zap.String("site", "HandleGroupChatInvitation"))
 	if err := ValidateReceivedGroupChatInvitation(&pbGHInvitations); err != nil {
 		logger.Error("invalid group chat invitation", zap.Error(err))
@@ -966,6 +1084,14 @@ func (m *MessageHandler) HandleGroupChatInvitation(state *ReceivedMessageState, 
 // extracts contact information stored in the protobuf and adds it to the user's contact for update.
 func (m *MessageHandler) HandleChatIdentity(state *ReceivedMessageState, ci protobuf.ChatIdentity) error {
 	logger := m.logger.With(zap.String("site", "HandleChatIdentity"))
+	allowed, err := m.isMessageAllowedFrom(state.AllContacts, state.CurrentMessageState.Contact.ID, nil)
+	if err != nil {
+		return err
+	}
+
+	if !allowed {
+		return ErrMessageNotAllowed
+	}
 	contact := state.CurrentMessageState.Contact
 
 	logger.Info("Handling contact update")
@@ -981,9 +1107,44 @@ func (m *MessageHandler) HandleChatIdentity(state *ReceivedMessageState, ci prot
 			contact.Images[imageType] = images.IdentityImage{Name: imageType, Payload: image.Payload}
 
 		}
-		state.ModifiedContacts[contact.ID] = true
-		state.AllContacts[contact.ID] = contact
+		state.ModifiedContacts.Store(contact.ID, true)
+		state.AllContacts.Store(contact.ID, contact)
 	}
 
 	return nil
+}
+
+func (m *MessageHandler) isMessageAllowedFrom(allContacts *contactMap, publicKey string, chat *Chat) (bool, error) {
+	onlyFromContacts, err := m.settings.GetMessagesFromContactsOnly()
+	if err != nil {
+		return false, err
+	}
+
+	if !onlyFromContacts {
+		return true, nil
+	}
+
+	// if it's from us, it's allowed
+	if contactIDFromPublicKey(&m.identity.PublicKey) == publicKey {
+		return true, nil
+	}
+
+	// If the chat is active, we allow it
+	if chat != nil && chat.Active {
+		return true, nil
+	}
+
+	// If the chat is public, we allow it
+	if chat != nil && chat.Public() {
+		return true, nil
+	}
+
+	contact, ok := allContacts.Load(publicKey)
+	if !ok {
+		// If it's not in contacts, we don't allow it
+		return false, nil
+	}
+
+	// Otherwise we check if we added it
+	return contact.IsAdded(), nil
 }

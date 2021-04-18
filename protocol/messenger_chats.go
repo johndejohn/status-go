@@ -4,28 +4,40 @@ import (
 	"context"
 	"errors"
 
+	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/protocol/common"
 	"github.com/status-im/status-go/protocol/requests"
 	"github.com/status-im/status-go/protocol/transport"
 )
 
 func (m *Messenger) Chats() []*Chat {
+	var chats []*Chat
+
+	m.allChats.Range(func(chatID string, chat *Chat) (shouldContinue bool) {
+		chats = append(chats, chat)
+		return true
+	})
+
+	return chats
+}
+
+func (m *Messenger) ActiveChats() []*Chat {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
 	var chats []*Chat
 
-	for _, c := range m.allChats {
-		chats = append(chats, c)
-	}
+	m.allChats.Range(func(chatID string, c *Chat) bool {
+		if c.Active {
+			chats = append(chats, c)
+		}
+		return true
+	})
 
 	return chats
 }
 
 func (m *Messenger) CreateOneToOneChat(request *requests.CreateOneToOneChat) (*MessengerResponse, error) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
 	if err := request.Validate(); err != nil {
 		return nil, err
 	}
@@ -36,7 +48,7 @@ func (m *Messenger) CreateOneToOneChat(request *requests.CreateOneToOneChat) (*M
 		return nil, err
 	}
 
-	chat, ok := m.allChats[chatID]
+	chat, ok := m.allChats.Load(chatID)
 	if !ok {
 		chat = CreateOneToOneChat(chatID, pk, m.getTimesource())
 	}
@@ -52,7 +64,8 @@ func (m *Messenger) CreateOneToOneChat(request *requests.CreateOneToOneChat) (*M
 		return nil, err
 	}
 
-	m.allChats[chatID] = chat
+	// TODO(Samyoul) remove storing of an updated reference pointer?
+	m.allChats.Store(chatID, chat)
 
 	response := &MessengerResponse{
 		Filters: filters,
@@ -64,9 +77,6 @@ func (m *Messenger) CreateOneToOneChat(request *requests.CreateOneToOneChat) (*M
 }
 
 func (m *Messenger) DeleteChat(chatID string) error {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
 	return m.deleteChat(chatID)
 }
 
@@ -75,10 +85,10 @@ func (m *Messenger) deleteChat(chatID string) error {
 	if err != nil {
 		return err
 	}
-	chat, ok := m.allChats[chatID]
+	chat, ok := m.allChats.Load(chatID)
 
 	if ok && chat.Active && chat.Public() {
-		delete(m.allChats, chatID)
+		m.allChats.Delete(chatID)
 		return m.reregisterForPushNotifications()
 	}
 
@@ -86,20 +96,16 @@ func (m *Messenger) deleteChat(chatID string) error {
 }
 
 func (m *Messenger) SaveChat(chat *Chat) error {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
 	return m.saveChat(chat)
 }
 
 func (m *Messenger) DeactivateChat(chatID string) (*MessengerResponse, error) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
 	return m.deactivateChat(chatID)
 }
 
 func (m *Messenger) deactivateChat(chatID string) (*MessengerResponse, error) {
 	var response MessengerResponse
-	chat, ok := m.allChats[chatID]
+	chat, ok := m.allChats.Load(chatID)
 	if !ok {
 		return nil, ErrChatNotFound
 	}
@@ -121,7 +127,8 @@ func (m *Messenger) deactivateChat(chatID string) (*MessengerResponse, error) {
 		}
 	}
 
-	m.allChats[chatID] = chat
+	// TODO(samyoul) remove storing of an updated reference pointer?
+	m.allChats.Store(chatID, chat)
 
 	response.AddChat(chat)
 	// TODO: Remove filters
@@ -135,7 +142,7 @@ func (m *Messenger) saveChats(chats []*Chat) error {
 		return err
 	}
 	for _, chat := range chats {
-		m.allChats[chat.ID] = chat
+		m.allChats.Store(chat.ID, chat)
 	}
 
 	return nil
@@ -143,8 +150,15 @@ func (m *Messenger) saveChats(chats []*Chat) error {
 }
 
 func (m *Messenger) saveChat(chat *Chat) error {
-	previousChat, ok := m.allChats[chat.ID]
+	previousChat, ok := m.allChats.Load(chat.ID)
 	if chat.OneToOne() {
+		// We clear all notifications so it pops up again
+		if !chat.Active {
+			err := m.persistence.DeleteActivityCenterNotification(types.FromHex(chat.ID))
+			if err != nil {
+				return err
+			}
+		}
 		name, identicon, err := generateAliasAndIdenticon(chat.ID)
 		if err != nil {
 			return err
@@ -170,7 +184,8 @@ func (m *Messenger) saveChat(chat *Chat) error {
 	if err != nil {
 		return err
 	}
-	m.allChats[chat.ID] = chat
+	// TODO(samyoul) remove storing of an updated reference pointer?
+	m.allChats.Store(chat.ID, chat)
 
 	if shouldRegisterForPushNotifications {
 		// Re-register for push notifications, as we want to receive mentions
