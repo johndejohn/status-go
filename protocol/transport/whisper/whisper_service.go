@@ -466,6 +466,17 @@ func (a *Transport) SendMessagesRequestForFilter(
 	return nil, nil
 }
 
+func (a *Transport) SendMessagesRequestForTopics(
+	ctx context.Context,
+	peerID []byte,
+	from, to uint32,
+	previousCursor []byte,
+	topics []types.TopicType,
+	waitForResponse bool,
+) (cursor []byte, err error) {
+	return nil, nil
+}
+
 func (a *Transport) LoadKeyFilters(key *ecdsa.PrivateKey) (*transport.Filter, error) {
 	return a.filters.LoadPartitioned(&key.PublicKey, key, true)
 }

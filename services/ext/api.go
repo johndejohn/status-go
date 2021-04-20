@@ -732,6 +732,11 @@ func (api *PublicAPI) ActivityCenterNotifications(cursor string, limit uint64) (
 	return api.service.messenger.ActivityCenterNotifications(cursor, limit)
 }
 
+func (api *PublicAPI) RequestAllHistoricMessages() error {
+	return api.service.messenger.RequestAllHistoricMessages()
+
+}
+
 // Echo is a method for testing purposes.
 func (api *PublicAPI) Echo(ctx context.Context, message string) (string, error) {
 	return message, nil

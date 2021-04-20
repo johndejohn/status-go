@@ -3026,6 +3026,68 @@ func (m *Messenger) RequestHistoricMessages(
 	return m.transport.SendMessagesRequest(ctx, m.mailserver, from, to, cursor, waitForResponse)
 }
 
+type MailserverBatch struct {
+	From   uint32
+	To     uint32
+	Cursor string
+	Topics []types.TopicType
+}
+
+// RequestAllHistoricMessages requests all the historic messages for any topic
+func (m *Messenger) RequestAllHistoricMessages() error {
+	allFilters := m.transport.Filters()
+	topicsToQuery := make(map[string]types.TopicType)
+
+	for _, f := range allFilters {
+		if f.Listen && !f.Ephemeral {
+			topicsToQuery[f.Topic.String()] = f.Topic
+		}
+	}
+
+	topicInfo, err := m.mailserversDatabase.Topics()
+	if err != nil {
+		return err
+	}
+
+	batches := make(map[int]MailserverBatch)
+
+	to := uint32(m.getTimesource().GetCurrentTime() / 1000)
+	for _, topic := range topicInfo {
+		topicBytes, ok := topicsToQuery[topic.Topic]
+		if !ok {
+			continue
+		}
+		batch, ok := batches[topic.LastRequest]
+		if !ok {
+			batch = MailserverBatch{From: uint32(topic.LastRequest), To: to}
+		}
+
+		batch.Topics = append(batch.Topics, topicBytes)
+		batches[topic.LastRequest] = batch
+
+	}
+
+	m.logger.Info("syncing topics", zap.Any("batches", batches))
+	for _, batch := range batches {
+		m.logger.Info("syncing topic", zap.Any("topic", batch.Topics), zap.Int64("from", int64(batch.From)), zap.Int64("to", int64(batch.To)))
+		cursor, err := m.transport.SendMessagesRequestForTopics(context.Background(), m.mailserver, batch.From, batch.To, nil, batch.Topics, true)
+		if err != nil {
+			return err
+		}
+		for len(cursor) != 0 {
+			m.logger.Info("retrieved cursor", zap.Any("cursor", cursor))
+
+			cursor, err = m.transport.SendMessagesRequest(context.Background(), m.mailserver, batch.From, batch.To, cursor, true)
+			if err != nil {
+				return err
+			}
+		}
+		m.logger.Info("synced topic", zap.Any("topic", batch.Topics), zap.Int64("from", int64(batch.From)), zap.Int64("to", int64(batch.To)))
+	}
+
+	return nil
+}
+
 func (m *Messenger) RequestHistoricMessagesForFilter(
 	ctx context.Context,
 	from, to uint32,

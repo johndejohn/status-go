@@ -414,7 +414,7 @@ func (a *Transport) cleanFiltersLoop() {
 	}()
 }
 
-func (a *Transport) sendMessagesRequestForTopics(
+func (a *Transport) SendMessagesRequestForTopics(
 	ctx context.Context,
 	peerID []byte,
 	from, to uint32,
@@ -462,7 +462,7 @@ func (a *Transport) SendMessagesRequest(
 		topics = append(topics, f.Topic)
 	}
 
-	return a.sendMessagesRequestForTopics(ctx, peerID, from, to, previousCursor, topics, waitForResponse)
+	return a.SendMessagesRequestForTopics(ctx, peerID, from, to, previousCursor, topics, waitForResponse)
 }
 
 func (a *Transport) SendMessagesRequestForFilter(
@@ -477,7 +477,7 @@ func (a *Transport) SendMessagesRequestForFilter(
 	topics := make([]types.TopicType, len(a.Filters()))
 	topics = append(topics, filter.Topic)
 
-	return a.sendMessagesRequestForTopics(ctx, peerID, from, to, previousCursor, topics, waitForResponse)
+	return a.SendMessagesRequestForTopics(ctx, peerID, from, to, previousCursor, topics, waitForResponse)
 }
 
 func (a *Transport) waitForRequestCompleted(ctx context.Context, requestID []byte, events chan types.EnvelopeEvent) (*types.MailServerResponse, error) {

@@ -52,6 +52,7 @@ var (
 	logWithoutColors = flag.Bool("log-without-color", false, "Disables log colors")
 	ipcEnabled       = flag.Bool("ipc", false, "Enable IPC RPC endpoint")
 	ipcFile          = flag.String("ipcfile", "", "Set IPC file path")
+	seedPhrase       = flag.String("seed-phrase", "", "Seed phrase")
 	pprofEnabled     = flag.Bool("pprof", false, "Enable runtime profiling via pprof")
 	pprofPort        = flag.Int("pprof-port", 52525, "Port for runtime profiling via pprof")
 	version          = flag.Bool("version", false, "Print version and dump configuration")
@@ -134,9 +135,8 @@ func main() {
 		return
 	}
 
-	seedPhrase := "embrace illness obvious future elephant make weekend miss annual tide bargain consider"
 	backend := api.NewGethStatusBackend()
-	err = ImportAccount(seedPhrase, backend)
+	err = ImportAccount(*seedPhrase, backend)
 	if err != nil {
 		logger.Error("failed", "err", err)
 		return
