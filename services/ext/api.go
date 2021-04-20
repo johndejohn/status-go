@@ -253,6 +253,10 @@ func (api *PublicAPI) LoadFilters(parent context.Context, chats []*transport.Fil
 	return api.service.messenger.LoadFilters(chats)
 }
 
+func (api *PublicAPI) Filters(parent context.Context) []*transport.Filter {
+	return api.service.messenger.Filters()
+}
+
 func (api *PublicAPI) SaveChat(parent context.Context, chat *protocol.Chat) error {
 	return api.service.messenger.SaveChat(chat)
 }

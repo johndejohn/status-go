@@ -3024,6 +3024,10 @@ func (m *Messenger) RequestHistoricMessagesForFilter(
 	return m.transport.SendMessagesRequestForFilter(ctx, m.mailserver, from, to, cursor, filter, waitForResponse)
 }
 
+func (m *Messenger) Filters() []*transport.Filter {
+	return m.transport.Filters()
+}
+
 func (m *Messenger) LoadFilters(filters []*transport.Filter) ([]*transport.Filter, error) {
 	return m.transport.LoadFilters(filters)
 }
