@@ -248,7 +248,7 @@ func NewMessenger(
 	// Initialise anon metrics client
 	var anonMetricsClient *anonmetrics.Client
 	if c.anonMetricsClientConfig != nil && c.anonMetricsClientConfig.ShouldSend {
-		anonMetricsClient = anonmetrics.NewClient()
+		anonMetricsClient = anonmetrics.NewClient(processor)
 		anonMetricsClient.Config = c.anonMetricsClientConfig
 		anonMetricsClient.Identity = identity
 		anonMetricsClient.DB = appmetrics.NewDB(database)
@@ -4252,6 +4252,7 @@ func (m *Messenger) encodeChatEntity(chat *Chat, message common.ChatEntity) ([]b
 		if err != nil {
 			return nil, err
 		}
+
 	case ChatTypePublic, ChatTypeProfile:
 		l.Debug("sending public message", zap.String("chatName", chat.Name))
 		message.SetMessageType(protobuf.MessageType_PUBLIC_GROUP)
@@ -4259,6 +4260,7 @@ func (m *Messenger) encodeChatEntity(chat *Chat, message common.ChatEntity) ([]b
 		if err != nil {
 			return nil, err
 		}
+
 	case ChatTypeCommunityChat:
 		l.Debug("sending community chat message", zap.String("chatName", chat.Name))
 		// TODO: add grant
@@ -4267,6 +4269,7 @@ func (m *Messenger) encodeChatEntity(chat *Chat, message common.ChatEntity) ([]b
 		if err != nil {
 			return nil, err
 		}
+
 	case ChatTypePrivateGroupChat:
 		message.SetMessageType(protobuf.MessageType_PRIVATE_GROUP)
 		l.Debug("sending group message", zap.String("chatName", chat.Name))
