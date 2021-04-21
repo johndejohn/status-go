@@ -315,10 +315,6 @@ func (s *Service) verifyTransactionLoop(tick time.Duration, cancel <-chan struct
 	}
 }
 
-func (s *Service) ConfirmMessagesProcessed(messageIDs [][]byte) error {
-	return s.messenger.ConfirmMessagesProcessed(messageIDs)
-}
-
 func (s *Service) EnableInstallation(installationID string) error {
 	return s.messenger.EnableInstallation(installationID)
 }

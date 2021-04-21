@@ -37,6 +37,41 @@ func (m *Messenger) ActiveChats() []*Chat {
 	return chats
 }
 
+func (m *Messenger) CreatePublicChat(request *requests.CreatePublicChat) (*MessengerResponse, error) {
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+
+	chatID := request.ID
+
+	chat, ok := m.allChats.Load(chatID)
+	if !ok {
+		chat = CreatePublicChat(chatID, m.getTimesource())
+	}
+	chat.Active = true
+
+	// Save topics
+	_, err := m.Join(chat)
+	if err != nil {
+		return nil, err
+	}
+
+	err = m.saveChat(chat)
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MessengerResponse{}
+	response.AddChat(chat)
+
+	err = m.syncChat(chat.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	return response, nil
+}
+
 func (m *Messenger) CreateOneToOneChat(request *requests.CreateOneToOneChat) (*MessengerResponse, error) {
 	if err := request.Validate(); err != nil {
 		return nil, err

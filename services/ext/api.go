@@ -187,20 +187,6 @@ type Metadata struct {
 	Author       Author         `json:"author"`
 }
 
-// ConfirmMessagesProcessedByID is a method to confirm that messages was consumed by
-// the client side.
-// TODO: this is broken now as it requires dedup ID while a message hash should be used.
-func (api *PublicAPI) ConfirmMessagesProcessedByID(messageConfirmations []*Metadata) error {
-	confirmationCount := len(messageConfirmations)
-	dedupIDs := make([][]byte, confirmationCount)
-	encryptionIDs := make([][]byte, confirmationCount)
-	for i, confirmation := range messageConfirmations {
-		dedupIDs[i] = confirmation.DedupID
-		encryptionIDs[i] = confirmation.EncryptionID
-	}
-	return api.service.ConfirmMessagesProcessed(encryptionIDs)
-}
-
 func (api *PublicAPI) Leave(chat protocol.Chat) error {
 	return api.service.messenger.Leave(chat)
 }
@@ -259,6 +245,10 @@ func (api *PublicAPI) SaveChat(parent context.Context, chat *protocol.Chat) erro
 
 func (api *PublicAPI) CreateOneToOneChat(parent context.Context, request *requests.CreateOneToOneChat) (*protocol.MessengerResponse, error) {
 	return api.service.messenger.CreateOneToOneChat(request)
+}
+
+func (api *PublicAPI) CreatePublicChat(parent context.Context, request *requests.CreatePublicChat) (*protocol.MessengerResponse, error) {
+	return api.service.messenger.CreatePublicChat(request)
 }
 
 func (api *PublicAPI) Chats(parent context.Context) []*protocol.Chat {
