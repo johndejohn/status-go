@@ -801,7 +801,7 @@ func _0021_add_session_id_to_metricsUpSql() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "0021_add_session_id_to_metrics.up.sql", size: 55, mode: os.FileMode(0644), modTime: time.Unix(1618558805, 0)}
+	info := bindataFileInfo{name: "0021_add_session_id_to_metrics.up.sql", size: 55, mode: os.FileMode(0644), modTime: time.Unix(1618913882, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xb7, 0x81, 0xfc, 0x97, 0xd1, 0x8b, 0xea, 0x8e, 0xd7, 0xc2, 0x53, 0x62, 0xe9, 0xbc, 0xf, 0x8c, 0x46, 0x41, 0x41, 0xb7, 0x6, 0x35, 0xf5, 0xba, 0xbb, 0x28, 0x50, 0x48, 0xbf, 0x36, 0x90, 0x5c}}
 	return a, nil
 }
@@ -821,7 +821,7 @@ func _1618237885_settings_anon_metrics_should_sendUpSql() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "1618237885_settings_anon_metrics_should_send.up.sql", size: 80, mode: os.FileMode(0644), modTime: time.Unix(1618558805, 0)}
+	info := bindataFileInfo{name: "1618237885_settings_anon_metrics_should_send.up.sql", size: 80, mode: os.FileMode(0644), modTime: time.Unix(1618913882, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xea, 0x6c, 0x1d, 0x1f, 0x54, 0x62, 0x18, 0x22, 0x5c, 0xa7, 0x8c, 0x59, 0x24, 0xd3, 0x4d, 0x55, 0xc4, 0x2a, 0x9e, 0x4c, 0x37, 0x6b, 0xfd, 0xac, 0xec, 0xb7, 0x68, 0x21, 0x26, 0x26, 0xf3, 0x92}}
 	return a, nil
 }
@@ -841,7 +841,7 @@ func _1618395756_contacts_onlyUpSql() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "1618395756_contacts_only.up.sql", size: 136, mode: os.FileMode(0644), modTime: time.Unix(1618577521, 0)}
+	info := bindataFileInfo{name: "1618395756_contacts_only.up.sql", size: 136, mode: os.FileMode(0644), modTime: time.Unix(1618913882, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x1, 0xe3, 0xd0, 0xe7, 0xf2, 0x6e, 0xbf, 0x27, 0xf6, 0xe2, 0x2e, 0x16, 0x4b, 0x52, 0x3b, 0xcf, 0x63, 0x52, 0xfc, 0x1d, 0x43, 0xba, 0x42, 0xf9, 0x1e, 0x1e, 0x39, 0x40, 0xed, 0x0, 0x20, 0xa8}}
 	return a, nil
 }
