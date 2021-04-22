@@ -965,6 +965,7 @@ func (m *Messenger) Init() error {
 		publicKeys    []*ecdsa.PublicKey
 	)
 
+	logger.Info("1")
 	joinedCommunities, err := m.communitiesManager.Joined()
 	if err != nil {
 		return err
@@ -989,6 +990,7 @@ func (m *Messenger) Init() error {
 	if err != nil {
 		return err
 	}
+	logger.Info("2")
 
 	// Get chat IDs and public keys from the existing chats.
 	// TODO: Get only active chats by the query.
@@ -996,6 +998,7 @@ func (m *Messenger) Init() error {
 	if err != nil {
 		return err
 	}
+	logger.Info("3")
 	for _, chat := range chats {
 		if err := chat.Validate(); err != nil {
 			logger.Warn("failed to validate chat", zap.Error(err))
@@ -1030,12 +1033,14 @@ func (m *Messenger) Init() error {
 			return errors.New("invalid chat type")
 		}
 	}
+	logger.Info("4")
 
 	// Get chat IDs and public keys from the contacts.
 	contacts, err := m.persistence.Contacts()
 	if err != nil {
 		return err
 	}
+	logger.Info("5")
 	for idx, contact := range contacts {
 		m.allContacts.Store(contact.ID, contacts[idx])
 		// We only need filters for contacts added by us and not blocked.
@@ -1049,6 +1054,7 @@ func (m *Messenger) Init() error {
 		}
 		publicKeys = append(publicKeys, publicKey)
 	}
+	logger.Info("6")
 
 	installations, err := m.encryptor.GetOurInstallations(&m.identity.PublicKey)
 	if err != nil {
@@ -1058,8 +1064,10 @@ func (m *Messenger) Init() error {
 	for _, installation := range installations {
 		m.allInstallations.Store(installation.ID, installation)
 	}
+	logger.Info("7")
 
 	_, err = m.transport.InitFilters(publicChatIDs, publicKeys)
+	logger.Info("8")
 	return err
 }
 
