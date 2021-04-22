@@ -26,7 +26,7 @@ func (m *Messenger) syncChat(chatID string) error {
 		return errors.New("no filter registered for given chat")
 	}
 	to := m.calculateMailserverTo()
-	batch := MailserverBatch{From: uint32(m.defaultSyncPeriod()), To: to}
+	batch := MailserverBatch{Topics: []types.TopicType{filter.Topic}, From: uint32(m.defaultSyncPeriod()), To: to}
 	err := m.processMailserverBatch(batch)
 	if err != nil {
 		return err
