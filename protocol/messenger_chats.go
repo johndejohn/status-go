@@ -64,7 +64,7 @@ func (m *Messenger) CreatePublicChat(request *requests.CreatePublicChat) (*Messe
 	response := &MessengerResponse{}
 	response.AddChat(chat)
 
-	err = m.syncChat(chat.ID)
+	_, err = m.syncChat(chat.ID)
 	if err != nil {
 		return nil, err
 	}

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/gob"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -163,6 +164,18 @@ func (db sqlitePersistence) saveChat(tx *sql.Tx, chat Chat) error {
 	return err
 }
 
+func (db sqlitePersistence) SetLastSynced(lastSynced uint32, ids []string) error {
+	args := []interface{}{lastSynced}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+
+	inVector := strings.Repeat("?, ", len(ids)-1) + "?"
+	query := `UPDATE chats SET last_synced = ? WHERE id IN (` + inVector + `)` //nolint: gosec
+	_, err := db.db.Exec(query, args...)
+	return err
+}
+
 func (db sqlitePersistence) DeleteChat(chatID string) (err error) {
 	var tx *sql.Tx
 	tx, err = db.db.BeginTx(context.Background(), &sql.TxOptions{})
@@ -235,6 +248,7 @@ func (db sqlitePersistence) chats(tx *sql.Tx) (chats []*Chat, err error) {
 			chats.invitation_admin,
 			chats.profile,
 			chats.community_id,
+			chats.last_synced,
 			contacts.identicon,
 			contacts.alias
 		FROM chats LEFT JOIN contacts ON chats.id = contacts.id
@@ -273,6 +287,7 @@ func (db sqlitePersistence) chats(tx *sql.Tx) (chats []*Chat, err error) {
 			&invitationAdmin,
 			&profile,
 			&chat.CommunityID,
+			&chat.LastSynced,
 			&identicon,
 			&alias,
 		)

@@ -82,6 +82,9 @@ type Chat struct {
 
 	// CommunityID is the id of the community it belongs to
 	CommunityID string `json:"communityId,omitempty"`
+
+	// LastSynced is the last time the chat was synced, unix timestamp in seconds
+	LastSynced uint32 `json:"lastSynced,omitempty"`
 }
 
 func (c *Chat) PublicKey() (*ecdsa.PublicKey, error) {

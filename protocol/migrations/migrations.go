@@ -27,6 +27,7 @@
 // 1614152139_add_communities_request_to_join.up.sql (831B)
 // 1615374373_add_confirmations.up.sql (227B)
 // 1617694931_add_notification_center.up.sql (572B)
+// 1619099821_add_last_synced_field.up.sql (94B)
 // README.md (554B)
 // doc.go (850B)
 
@@ -632,8 +633,28 @@ func _1617694931_add_notification_centerUpSql() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "1617694931_add_notification_center.up.sql", size: 572, mode: os.FileMode(0644), modTime: time.Unix(1618594380, 0)}
+	info := bindataFileInfo{name: "1617694931_add_notification_center.up.sql", size: 572, mode: os.FileMode(0644), modTime: time.Unix(1618913882, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x10, 0x45, 0xc6, 0xc9, 0x73, 0xbb, 0x1f, 0xda, 0xa3, 0x4d, 0x19, 0x98, 0x85, 0x2d, 0xca, 0xda, 0xcc, 0x3b, 0x32, 0xff, 0xc7, 0x7b, 0xe3, 0x9f, 0x9b, 0x2a, 0x93, 0xf5, 0xdf, 0x65, 0x38, 0x91}}
+	return a, nil
+}
+
+var __1619099821_add_last_synced_fieldUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x72\xf4\x09\x71\x0d\x52\x08\x71\x74\xf2\x71\x55\x48\xce\x48\x2c\x29\x56\x70\x74\x71\x51\x70\xf6\xf7\x09\xf5\xf5\x53\xc8\x49\x2c\x2e\x89\x2f\xae\xcc\x4b\x4e\x4d\x51\xf0\xf4\x0b\x71\x75\x77\x0d\x52\x70\x71\x75\x73\x0c\xf5\x09\x51\x30\xb0\xe6\x0a\x0d\x70\x71\x0c\x81\x69\x0b\x76\x0d\x41\x51\x6f\xab\x60\x68\xcd\x05\x08\x00\x00\xff\xff\xde\xfe\x33\xbd\x5e\x00\x00\x00")
+
+func _1619099821_add_last_synced_fieldUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1619099821_add_last_synced_fieldUpSql,
+		"1619099821_add_last_synced_field.up.sql",
+	)
+}
+
+func _1619099821_add_last_synced_fieldUpSql() (*asset, error) {
+	bytes, err := _1619099821_add_last_synced_fieldUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1619099821_add_last_synced_field.up.sql", size: 94, mode: os.FileMode(0644), modTime: time.Unix(1619099898, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xfe, 0x87, 0xa4, 0xab, 0x7, 0x4a, 0x28, 0x73, 0xc4, 0x9e, 0xe7, 0x49, 0xbe, 0x9b, 0x3f, 0x0, 0x25, 0x9e, 0x3, 0xea, 0x2b, 0x19, 0x9b, 0x9d, 0x60, 0xf, 0xd8, 0xc0, 0x6b, 0xd5, 0x31, 0x99}}
 	return a, nil
 }
 
@@ -822,6 +843,8 @@ var _bindata = map[string]func() (*asset, error){
 
 	"1617694931_add_notification_center.up.sql": _1617694931_add_notification_centerUpSql,
 
+	"1619099821_add_last_synced_field.up.sql": _1619099821_add_last_synced_fieldUpSql,
+
 	"README.md": readmeMd,
 
 	"doc.go": docGo,
@@ -895,6 +918,7 @@ var _bintree = &bintree{nil, map[string]*bintree{
 	"1614152139_add_communities_request_to_join.up.sql":           &bintree{_1614152139_add_communities_request_to_joinUpSql, map[string]*bintree{}},
 	"1615374373_add_confirmations.up.sql":                         &bintree{_1615374373_add_confirmationsUpSql, map[string]*bintree{}},
 	"1617694931_add_notification_center.up.sql":                   &bintree{_1617694931_add_notification_centerUpSql, map[string]*bintree{}},
+	"1619099821_add_last_synced_field.up.sql":                     &bintree{_1619099821_add_last_synced_fieldUpSql, map[string]*bintree{}},
 	"README.md": &bintree{readmeMd, map[string]*bintree{}},
 	"doc.go":    &bintree{docGo, map[string]*bintree{}},
 }}

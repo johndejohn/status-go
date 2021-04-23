@@ -19,27 +19,22 @@ func (m *Messenger) calculateMailserverTo() uint32 {
 	return uint32(m.getTimesource().GetCurrentTime() / 1000)
 }
 
-// Assume is a public chat for now
-func (m *Messenger) syncChat(chatID string) error {
+func (m *Messenger) filtersForChat(chatID string) ([]*transport.Filter, error) {
 	filter := m.transport.FilterByChatID(chatID)
 	if filter == nil {
-		return errors.New("no filter registered for given chat")
-	}
-	to := m.calculateMailserverTo()
-	batch := MailserverBatch{Topics: []types.TopicType{filter.Topic}, From: uint32(m.defaultSyncPeriod()), To: to}
-	err := m.processMailserverBatch(batch)
-	if err != nil {
-		return err
+		return nil, errors.New("no filter registered for given chat")
 	}
 
-	syncedTopics := []mailservers.MailserverTopic{
-		{
-			ChatIDs:     []string{chatID},
-			Topic:       filter.Topic.String(),
-			LastRequest: int(to),
-		},
+	return []*transport.Filter{filter}, nil
+}
+
+// Assume is a public chat for now
+func (m *Messenger) syncChat(chatID string) (*MessengerResponse, error) {
+	filters, err := m.filtersForChat(chatID)
+	if err != nil {
+		return nil, err
 	}
-	return m.mailserversDatabase.AddTopics(syncedTopics)
+	return m.syncFilters(filters)
 }
 
 func (m *Messenger) defaultSyncPeriod() int {
@@ -47,19 +42,15 @@ func (m *Messenger) defaultSyncPeriod() int {
 }
 
 // RequestAllHistoricMessages requests all the historic messages for any topic
-func (m *Messenger) RequestAllHistoricMessages() error {
-	allFilters := m.transport.Filters()
-	topicsToQuery := make(map[string]types.TopicType)
+func (m *Messenger) RequestAllHistoricMessages() (*MessengerResponse, error) {
+	return m.syncFilters(m.transport.Filters())
+}
 
-	for _, f := range allFilters {
-		if f.Listen && !f.Ephemeral {
-			topicsToQuery[f.Topic.String()] = f.Topic
-		}
-	}
-
+func (m *Messenger) syncFilters(filters []*transport.Filter) (*MessengerResponse, error) {
+	response := &MessengerResponse{}
 	topicInfo, err := m.mailserversDatabase.Topics()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	topicsData := make(map[string]mailservers.MailserverTopic)
@@ -69,13 +60,29 @@ func (m *Messenger) RequestAllHistoricMessages() error {
 
 	batches := make(map[int]MailserverBatch)
 
+	var syncedChatIDs []string
+
 	to := m.calculateMailserverTo()
 	var syncedTopics []mailservers.MailserverTopic
-	for _, topic := range topicsToQuery {
-		topicData, ok := topicsData[topic.String()]
+	for _, filter := range filters {
+		if !filter.Listen || filter.Ephemeral {
+			continue
+		}
+
+		var chatID string
+		// If the filter has an identity, we use it as a chatID, otherwise is a public chat/community chat filter
+		if len(filter.Identity) != 0 {
+			chatID = filter.Identity
+		} else {
+			chatID = filter.ChatID
+		}
+
+		syncedChatIDs = append(syncedChatIDs, chatID)
+
+		topicData, ok := topicsData[filter.Topic.String()]
 		if !ok {
 			topicData = mailservers.MailserverTopic{
-				Topic:       topic.String(),
+				Topic:       filter.Topic.String(),
 				LastRequest: m.defaultSyncPeriod(),
 			}
 		}
@@ -84,7 +91,8 @@ func (m *Messenger) RequestAllHistoricMessages() error {
 			batch = MailserverBatch{From: uint32(topicData.LastRequest), To: to}
 		}
 
-		batch.Topics = append(batch.Topics, topic)
+		batch.ChatIDs = append(batch.ChatIDs, chatID)
+		batch.Topics = append(batch.Topics, filter.Topic)
 		batches[topicData.LastRequest] = batch
 		// Set last request to the new `to`
 		topicData.LastRequest = int(to)
@@ -96,7 +104,26 @@ func (m *Messenger) RequestAllHistoricMessages() error {
 		m.processMailserverBatch(batch)
 	}
 
-	return m.mailserversDatabase.AddTopics(syncedTopics)
+	err = m.mailserversDatabase.AddTopics(syncedTopics)
+	if err != nil {
+		return nil, err
+	}
+
+	err = m.persistence.SetLastSynced(to, syncedChatIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, id := range syncedChatIDs {
+		chat, ok := m.allChats.Load(id)
+		if !ok {
+			continue
+		}
+		chat.LastSynced = to
+		response.AddChat(chat)
+	}
+
+	return response, nil
 }
 
 func (m *Messenger) processMailserverBatch(batch MailserverBatch) error {
@@ -115,14 +142,14 @@ func (m *Messenger) processMailserverBatch(batch MailserverBatch) error {
 	}
 	m.logger.Info("synced topic", zap.Any("topic", batch.Topics), zap.Int64("from", int64(batch.From)), zap.Int64("to", int64(batch.To)))
 	return nil
-
 }
 
 type MailserverBatch struct {
-	From   uint32
-	To     uint32
-	Cursor string
-	Topics []types.TopicType
+	From    uint32
+	To      uint32
+	Cursor  string
+	Topics  []types.TopicType
+	ChatIDs []string
 }
 
 func (m *Messenger) RequestHistoricMessagesForFilter(
