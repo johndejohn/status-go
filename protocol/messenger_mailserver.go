@@ -42,7 +42,7 @@ func (m *Messenger) syncChat(chatID string) (*MessengerResponse, error) {
 }
 
 func (m *Messenger) defaultSyncPeriod() int {
-	return int(m.getTimesource().GetCurrentTime()/1000 - 24*60*60)
+	return int(m.getTimesource().GetCurrentTime()/1000 - 60)
 }
 
 // capSyncPeriod caps the sync period to the default
