@@ -24,6 +24,7 @@ type MessengerResponse struct {
 	Mailservers             []mailservers.Mailserver
 	MailserverTopics        []mailservers.MailserverTopic
 	MailserverRanges        []mailservers.ChatRequestRange
+	MailserverGaps          []mailservers.MailserverRequestGap
 
 	// notifications a list of notifications derived from messenger events
 	// that are useful to notify the user about
@@ -36,20 +37,21 @@ type MessengerResponse struct {
 
 func (r *MessengerResponse) MarshalJSON() ([]byte, error) {
 	responseItem := struct {
-		Chats                   []*Chat                         `json:"chats,omitempty"`
-		RemovedChats            []string                        `json:"removedChats,omitempty"`
-		Messages                []*common.Message               `json:"messages,omitempty"`
-		Contacts                []*Contact                      `json:"contacts,omitempty"`
-		Installations           []*multidevice.Installation     `json:"installations,omitempty"`
-		EmojiReactions          []*EmojiReaction                `json:"emojiReactions,omitempty"`
-		Invitations             []*GroupChatInvitation          `json:"invitations,omitempty"`
-		CommunityChanges        []*communities.CommunityChanges `json:"communityChanges,omitempty"`
-		RequestsToJoinCommunity []*communities.RequestToJoin    `json:"requestsToJoinCommunity,omitempty"`
-		Filters                 []*transport.Filter             `json:"filters,omitempty"`
-		RemovedFilters          []*transport.Filter             `json:"removedFilters,omitempty"`
-		Mailservers             []mailservers.Mailserver        `json:"mailservers,omitempty"`
-		MailserverTopics        []mailservers.MailserverTopic   `json:"mailserverTopics,omitempty"`
-		MailserverRanges        []mailservers.ChatRequestRange  `json:"mailserverRanges,omitempty"`
+		Chats                   []*Chat                            `json:"chats,omitempty"`
+		RemovedChats            []string                           `json:"removedChats,omitempty"`
+		Messages                []*common.Message                  `json:"messages,omitempty"`
+		Contacts                []*Contact                         `json:"contacts,omitempty"`
+		Installations           []*multidevice.Installation        `json:"installations,omitempty"`
+		EmojiReactions          []*EmojiReaction                   `json:"emojiReactions,omitempty"`
+		Invitations             []*GroupChatInvitation             `json:"invitations,omitempty"`
+		CommunityChanges        []*communities.CommunityChanges    `json:"communityChanges,omitempty"`
+		RequestsToJoinCommunity []*communities.RequestToJoin       `json:"requestsToJoinCommunity,omitempty"`
+		Filters                 []*transport.Filter                `json:"filters,omitempty"`
+		RemovedFilters          []*transport.Filter                `json:"removedFilters,omitempty"`
+		Mailservers             []mailservers.Mailserver           `json:"mailservers,omitempty"`
+		MailserverTopics        []mailservers.MailserverTopic      `json:"mailserverTopics,omitempty"`
+		MailserverRanges        []mailservers.ChatRequestRange     `json:"mailserverRanges,omitempty"`
+		MailserverGaps          []mailservers.MailserverRequestGap `json:"mailserverGaps,omitempty"`
 		// Notifications a list of notifications derived from messenger events
 		// that are useful to notify the user about
 		Notifications               []*localnotifications.Notification `json:"notifications"`
@@ -68,6 +70,7 @@ func (r *MessengerResponse) MarshalJSON() ([]byte, error) {
 		Mailservers:             r.Mailservers,
 		MailserverTopics:        r.MailserverTopics,
 		MailserverRanges:        r.MailserverRanges,
+		MailserverGaps:          r.MailserverGaps,
 	}
 
 	responseItem.Notifications = r.Notifications()
@@ -286,4 +289,12 @@ func (r *MessengerResponse) ActivityCenterNotifications() []*ActivityCenterNotif
 		ns = append(ns, n)
 	}
 	return ns
+}
+
+func (r *MessengerResponse) AddMailserverGap(gap mailservers.MailserverRequestGap) {
+	r.MailserverGaps = append(r.MailserverGaps, gap)
+}
+
+func (r *MessengerResponse) AddMessage(message *common.Message) {
+	r.Messages = append(r.Messages, message)
 }

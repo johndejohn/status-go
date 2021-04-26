@@ -2,11 +2,15 @@ package protocol
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 
+	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
+	"github.com/status-im/status-go/protocol/common"
+	"github.com/status-im/status-go/protocol/protobuf"
 	"github.com/status-im/status-go/protocol/transport"
 	"github.com/status-im/status-go/services/mailservers"
 )
@@ -39,6 +43,15 @@ func (m *Messenger) syncChat(chatID string) (*MessengerResponse, error) {
 
 func (m *Messenger) defaultSyncPeriod() int {
 	return int(m.getTimesource().GetCurrentTime()/1000 - 24*60*60)
+}
+
+// capSyncPeriod caps the sync period to the default
+func (m *Messenger) capSyncPeriod(period uint32) uint32 {
+	d := uint32(m.defaultSyncPeriod())
+	if d > period {
+		return d
+	}
+	return period
 }
 
 // RequestAllHistoricMessages requests all the historic messages for any topic
@@ -88,7 +101,8 @@ func (m *Messenger) syncFilters(filters []*transport.Filter) (*MessengerResponse
 		}
 		batch, ok := batches[topicData.LastRequest]
 		if !ok {
-			batch = MailserverBatch{From: uint32(topicData.LastRequest), To: to}
+			from := m.capSyncPeriod(uint32(topicData.LastRequest))
+			batch = MailserverBatch{From: from, To: to}
 		}
 
 		batch.ChatIDs = append(batch.ChatIDs, chatID)
@@ -114,16 +128,64 @@ func (m *Messenger) syncFilters(filters []*transport.Filter) (*MessengerResponse
 		return nil, err
 	}
 
-	for _, id := range syncedChatIDs {
-		chat, ok := m.allChats.Load(id)
-		if !ok {
-			continue
+	var messagesToBeSaved []*common.Message
+	for _, batch := range batches {
+		for _, id := range batch.ChatIDs {
+			chat, ok := m.allChats.Load(id)
+			if !ok {
+				continue
+			}
+			gap, err := m.calculateGapForChat(chat, batch.From)
+			if err != nil {
+				return nil, err
+			}
+			chat.LastSynced = to
+			response.AddChat(chat)
+			response.AddMessage(gap)
+			messagesToBeSaved = append(messagesToBeSaved, gap)
+			// Calculate gaps
+			// If last-synced is 0, no gaps
+			// If last-synced < from, create gap from
 		}
-		chat.LastSynced = to
-		response.AddChat(chat)
 	}
 
-	return response, nil
+	return response, m.persistence.SaveMessages(messagesToBeSaved)
+}
+
+func (m *Messenger) calculateGapForChat(chat *Chat, from uint32) (*common.Message, error) {
+	// Chat was never synced, no gap necessary
+	if chat.LastSynced == 0 {
+		return nil, nil
+	}
+
+	// If we filled the gap, nothing to do
+	if chat.LastSynced >= from {
+		return nil, nil
+	}
+
+	timestamp := m.getTimesource().GetCurrentTime()
+
+	message := &common.Message{
+		ChatMessage: protobuf.ChatMessage{
+			ChatId:      chat.ID,
+			Text:        "Gap message",
+			MessageType: protobuf.MessageType_SYSTEM_MESSAGE_GAP,
+			ContentType: protobuf.ChatMessage_SYSTEM_MESSAGE_GAP,
+			Clock:       uint64(from),
+			Timestamp:   timestamp,
+		},
+		GapParameters: &common.GapParameters{
+			From: chat.LastSynced,
+			To:   from,
+		},
+		From:             common.PubkeyToHex(&m.identity.PublicKey),
+		WhisperTimestamp: timestamp,
+		LocalChatID:      chat.ID,
+		Seen:             true,
+		ID:               types.EncodeHex(crypto.Keccak256([]byte(fmt.Sprintf("%s-%d-%d", chat.ID, chat.LastSynced, from)))),
+	}
+
+	return message, m.persistence.SaveMessages([]*common.Message{message})
 }
 
 func (m *Messenger) processMailserverBatch(batch MailserverBatch) error {

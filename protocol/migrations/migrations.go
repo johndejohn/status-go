@@ -653,7 +653,7 @@ func _1619099821_add_last_synced_fieldUpSql() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "1619099821_add_last_synced_field.up.sql", size: 94, mode: os.FileMode(0644), modTime: time.Unix(1619099898, 0)}
+	info := bindataFileInfo{name: "1619099821_add_last_synced_field.up.sql", size: 94, mode: os.FileMode(0644), modTime: time.Unix(1619180307, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xfe, 0x87, 0xa4, 0xab, 0x7, 0x4a, 0x28, 0x73, 0xc4, 0x9e, 0xe7, 0x49, 0xbe, 0x9b, 0x3f, 0x0, 0x25, 0x9e, 0x3, 0xea, 0x2b, 0x19, 0x9b, 0x9d, 0x60, 0xf, 0xd8, 0xc0, 0x6b, 0xd5, 0x31, 0x99}}
 	return a, nil
 }
