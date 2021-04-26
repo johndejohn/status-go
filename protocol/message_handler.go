@@ -1109,6 +1109,12 @@ func (m *MessageHandler) HandleChatIdentity(state *ReceivedMessageState, ci prot
 	return nil
 }
 
+func (m *MessageHandler) HandleAnonymousMetricBatch(amb protobuf.AnonymousMetricBatch) error {
+
+	// TODO
+	return nil
+}
+
 func (m *MessageHandler) isMessageAllowedFrom(allContacts *contactMap, publicKey string, chat *Chat) (bool, error) {
 	onlyFromContacts, err := m.settings.GetMessagesFromContactsOnly()
 	if err != nil {
