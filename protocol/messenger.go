@@ -348,6 +348,7 @@ func NewMessenger(
 			func() error { _ = logger.Sync; return nil },
 			database.Close,
 			anonMetricsClient.Stop,
+			anonMetricsServer.Stop,
 		},
 		logger: logger,
 	}
@@ -2867,10 +2868,9 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 
 					case protobuf.AnonymousMetricBatch:
 						logger.Debug("Handling AnonymousMetricBatch")
-						amb := msg.ParsedMessage.Interface().(protobuf.AnonymousMetricBatch)
-						err = m.handler.HandleAnonymousMetricBatch(amb)
+						err = m.anonMetricsServer.AddMetrics(msg.ParsedMessage.Interface().(protobuf.AnonymousMetricBatch))
 						if err != nil {
-							logger.Warn("failed to handle AnonymousMetricBatch", zap.Error(err))
+							logger.Warn("failed to store AnonymousMetricBatch", zap.Error(err))
 							continue
 						}
 

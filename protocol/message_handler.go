@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/pkg/errors"
-
 	"go.uber.org/zap"
 
 	"github.com/status-im/status-go/eth-node/crypto"
@@ -18,7 +17,6 @@ import (
 	"github.com/status-im/status-go/protocol/encryption/multidevice"
 	"github.com/status-im/status-go/protocol/ens"
 	"github.com/status-im/status-go/protocol/protobuf"
-
 	"github.com/status-im/status-go/protocol/transport"
 	v1protocol "github.com/status-im/status-go/protocol/v1"
 )
@@ -1106,12 +1104,6 @@ func (m *MessageHandler) HandleChatIdentity(state *ReceivedMessageState, ci prot
 		state.AllContacts.Store(contact.ID, contact)
 	}
 
-	return nil
-}
-
-func (m *MessageHandler) HandleAnonymousMetricBatch(amb protobuf.AnonymousMetricBatch) error {
-
-	// TODO
 	return nil
 }
 
