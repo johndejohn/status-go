@@ -357,6 +357,22 @@ func (m *Messenger) CreateCommunity(request *requests.CreateCommunity) (*Messeng
 	return response, nil
 }
 
+func (m *Messenger) UpdateCommunity(request *requests.UpdateCommunity) (*MessengerResponse, error) {
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+
+	community, err := m.communitiesManager.UpdateCommunity(request)
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MessengerResponse{}
+	response.AddCommunity(community)
+
+	return response, nil
+}
+
 func (m *Messenger) ExportCommunity(id types.HexBytes) (*ecdsa.PrivateKey, error) {
 	return m.communitiesManager.ExportCommunity(id)
 }

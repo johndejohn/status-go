@@ -3,6 +3,7 @@ package communities
 import (
 	"crypto/ecdsa"
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -173,13 +174,42 @@ func (m *Manager) CreateCommunity(description *protobuf.CommunityDescription) (*
 	return community, nil
 }
 
+// UpdateCommunity takes a new description for community and updates it
+func (m *Manager) UpdateCommunity(request *requests.UpdateCommunity) (*Community, error) {
+	community, err := m.GetByID(request.CommunityID)
+
+	if !community.IsAdmin() {
+		return nil, errors.New("not an admin")
+	}
+
+	newDescription, err := request.ToCommunityDescription()
+	if err != nil {
+		return nil, fmt.Errorf("Can't create community description: %v", err)
+	}
+
+	community.config.CommunityDescription.Identity.Images = newDescription.Identity.Images
+	community.config.CommunityDescription.Identity.DisplayName = newDescription.Identity.DisplayName
+	community.config.CommunityDescription.Identity.Description = newDescription.Identity.Description
+	community.config.CommunityDescription.Identity.Color = newDescription.Identity.Color
+	community.config.CommunityDescription.Permissions = newDescription.Permissions
+
+	err = m.persistence.SaveCommunity(community)
+	if err != nil {
+		return nil, err
+	}
+
+	m.publish(&Subscription{Community: community})
+
+	return community, nil
+}
+
 func (m *Manager) ExportCommunity(id types.HexBytes) (*ecdsa.PrivateKey, error) {
 	community, err := m.GetByID(id)
 	if err != nil {
 		return nil, err
 	}
 
-	if community.config.PrivateKey == nil {
+	if !community.IsAdmin() {
 		return nil, errors.New("not an admin")
 	}
 
