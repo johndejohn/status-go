@@ -35,6 +35,9 @@ const (
 
 const pkStringLength = 68
 
+// timelineChatID is a magic constant id for your own timeline
+const timelineChatID = "@timeline70bd746ddcc12beb96b2c9d572d0784ab137ffc774f5383e50585a932080b57cca0484b259e61cecbaa33a4c98a300a"
+
 type Chat struct {
 	// ID is the id of the chat, for public chats it is the name e.g. status, for one-to-one
 	// is the hex encoded public key and for group chats is a random uuid appended with
@@ -84,6 +87,12 @@ type Chat struct {
 	CommunityID string `json:"communityId,omitempty"`
 	// Joined is a timestamp that indicates when the chat was joined
 	Joined int64 `json:"joined,omitempty"`
+
+	// SyncedTo is the time up until it has synced with a mailserver
+	SyncedTo uint32 `json:"syncedTo,omitempty"`
+
+	// SyncedFrom is the time from when it was synced with a mailserver
+	SyncedFrom uint32 `json:"syncedFrom,omitempty"`
 }
 
 func (c *Chat) PublicKey() (*ecdsa.PublicKey, error) {
@@ -283,6 +292,7 @@ func CreateOneToOneChat(name string, publicKey *ecdsa.PublicKey, timesource comm
 		Name:      name,
 		Timestamp: int64(timesource.GetCurrentTime()),
 		Active:    true,
+		Joined:    int64(timesource.GetCurrentTime()),
 		ChatType:  ChatTypeOneToOne,
 	}
 }
@@ -300,6 +310,7 @@ func CreateCommunityChat(orgID, chatID string, orgChat *protobuf.CommunityChat, 
 		Color:       color,
 		ID:          orgID + chatID,
 		Timestamp:   int64(timesource.GetCurrentTime()),
+		Joined:      int64(timesource.GetCurrentTime()),
 		ChatType:    ChatTypeCommunityChat,
 	}
 }
@@ -339,6 +350,7 @@ func CreatePublicChat(name string, timesource common.TimeSource) *Chat {
 		Name:      name,
 		Active:    true,
 		Timestamp: int64(timesource.GetCurrentTime()),
+		Joined:    int64(timesource.GetCurrentTime()),
 		Color:     chatColors[rand.Intn(len(chatColors))], // nolint: gosec
 		ChatType:  ChatTypePublic,
 	}
@@ -348,15 +360,18 @@ func buildProfileChatID(publicKeyString string) string {
 	return "@" + publicKeyString
 }
 
-func CreateProfileChat(id string, profile string, timesource common.TimeSource) *Chat {
+func CreateProfileChat(pubkey string, timesource common.TimeSource) *Chat {
+
+	id := buildProfileChatID(pubkey)
 	return &Chat{
 		ID:        id,
 		Name:      id,
 		Active:    true,
 		Timestamp: int64(timesource.GetCurrentTime()),
+		Joined:    int64(timesource.GetCurrentTime()),
 		Color:     chatColors[rand.Intn(len(chatColors))], // nolint: gosec
 		ChatType:  ChatTypeProfile,
-		Profile:   profile,
+		Profile:   pubkey,
 	}
 }
 
@@ -366,6 +381,16 @@ func CreateGroupChat(timesource common.TimeSource) Chat {
 		Color:     chatColors[rand.Intn(len(chatColors))], // nolint: gosec
 		Timestamp: int64(timesource.GetCurrentTime()),
 		ChatType:  ChatTypePrivateGroupChat,
+	}
+}
+
+func CreateTimelineChat(timesource common.TimeSource) *Chat {
+	return &Chat{
+		ID:        timelineChatID,
+		Name:      "#" + timelineChatID,
+		Timestamp: int64(timesource.GetCurrentTime()),
+		Active:    true,
+		ChatType:  ChatTypeTimeline,
 	}
 }
 

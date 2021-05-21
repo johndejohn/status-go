@@ -1,5 +1,3 @@
-// +build !nimbus
-
 package api
 
 import (
@@ -25,6 +23,7 @@ import (
 	"github.com/status-im/status-go/account"
 	"github.com/status-im/status-go/appdatabase"
 	"github.com/status-im/status-go/appmetrics"
+	"github.com/status-im/status-go/connection"
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/logutils"
@@ -45,6 +44,7 @@ import (
 	"github.com/status-im/status-go/services/rpcstats"
 	"github.com/status-im/status-go/services/subscriptions"
 	"github.com/status-im/status-go/services/typeddata"
+	"github.com/status-im/status-go/services/wakuext"
 	"github.com/status-im/status-go/services/wallet"
 	"github.com/status-im/status-go/signal"
 	"github.com/status-im/status-go/transactions"
@@ -87,7 +87,7 @@ type GethStatusBackend struct {
 	account              *multiaccounts.Account
 	accountManager       *account.GethManager
 	transactor           *transactions.Transactor
-	connectionState      connectionState
+	connectionState      connection.State
 	appState             appState
 	selectedAccountKeyID string
 	log                  log.Logger
@@ -522,7 +522,6 @@ func (b *GethStatusBackend) loadNodeConfig() (*params.NodeConfig, error) {
 	}
 
 	conf.WakuConfig.Enabled = true
-	conf.WhisperConfig.Enabled = false
 
 	// NodeConfig.Version should be taken from params.Version
 	// which is set at the compile time.
@@ -969,17 +968,21 @@ func (b *GethStatusBackend) ConnectionChange(typ string, expensive bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	state := connectionState{
-		Type:      newConnectionType(typ),
+	state := connection.State{
+		Type:      connection.NewConnectionType(typ),
 		Expensive: expensive,
 	}
-	if typ == none {
+	if typ == connection.None {
 		state.Offline = true
 	}
 
 	b.log.Info("Network state change", "old", b.connectionState, "new", state)
 
 	b.connectionState = state
+	err := b.statusNode.ConnectionChanged(state)
+	if err != nil {
+		b.log.Error("failed to notify of connection changed", "err", err)
+	}
 
 	// logic of handling state changes here
 	// restart node? force peers reconnect? etc
@@ -1073,17 +1076,6 @@ func (b *GethStatusBackend) Logout() error {
 
 // cleanupServices stops parts of services that doesn't managed by a node and removes injected data from services.
 func (b *GethStatusBackend) cleanupServices() error {
-	whisperService, err := b.statusNode.WhisperService()
-	switch err {
-	case node.ErrServiceUnknown: // Whisper was never registered
-	case nil:
-		if err := whisperService.DeleteKeyPairs(); err != nil {
-			return fmt.Errorf("%s: %v", ErrWhisperClearIdentitiesFailure, err)
-		}
-		b.selectedAccountKeyID = ""
-	default:
-		return err
-	}
 	wakuService, err := b.statusNode.WakuService()
 	switch err {
 	case node.ErrServiceUnknown: // Waku was never registered
@@ -1158,6 +1150,9 @@ func (b *GethStatusBackend) GetActiveAccount() (*multiaccounts.Account, error) {
 
 	return b.account, nil
 }
+func (b *GethStatusBackend) WakuExtService() (*wakuext.Service, error) {
+	return b.statusNode.WakuExtService()
+}
 
 func (b *GethStatusBackend) injectAccountsIntoServices() error {
 	chatAccount, err := b.accountManager.SelectedChatAccount()
@@ -1166,37 +1161,10 @@ func (b *GethStatusBackend) injectAccountsIntoServices() error {
 	}
 
 	identity := chatAccount.AccountKey.PrivateKey
-	whisperService, err := b.statusNode.WhisperService()
-
-	switch err {
-	case node.ErrServiceUnknown: // Whisper was never registered
-	case nil:
-		if err := whisperService.DeleteKeyPairs(); err != nil { // err is not possible; method return value is incorrect
-			return err
-		}
-		b.selectedAccountKeyID, err = whisperService.AddKeyPair(identity)
-		if err != nil {
-			return ErrWhisperIdentityInjectionFailure
-		}
-	default:
-		return err
-	}
 
 	acc, err := b.GetActiveAccount()
 	if err != nil {
 		return err
-	}
-
-	if whisperService != nil {
-		st, err := b.statusNode.ShhExtService()
-		if err != nil {
-			return err
-		}
-
-		if err := st.InitProtocol(identity, b.appDB, b.multiaccountsDB, acc, logutils.ZapLogger()); err != nil {
-			return err
-		}
-		return nil
 	}
 
 	wakuService, err := b.statusNode.WakuService()
@@ -1224,6 +1192,9 @@ func (b *GethStatusBackend) injectAccountsIntoServices() error {
 		if err := st.InitProtocol(identity, b.appDB, b.multiaccountsDB, acc, logutils.ZapLogger()); err != nil {
 			return err
 		}
+
+		// Set initial connection state
+		st.ConnectionChanged(b.connectionState)
 	}
 	return nil
 }

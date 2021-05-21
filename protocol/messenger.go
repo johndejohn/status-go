@@ -22,6 +22,7 @@ import (
 	"github.com/golang/protobuf/proto"
 
 	"github.com/status-im/status-go/appdatabase"
+	"github.com/status-im/status-go/connection"
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
 	userimage "github.com/status-im/status-go/images"
@@ -105,6 +106,7 @@ type Messenger struct {
 	mailserversDatabase        *mailservers.Database
 	quit                       chan struct{}
 	requestedCommunities       map[string]*transport.Filter
+	connectionState            connection.State
 
 	// TODO(samyoul) Determine if/how the remaining usage of this mutex can be removed
 	mutex sync.Mutex
@@ -445,21 +447,9 @@ func (m *Messenger) Start() (*MessengerResponse, error) {
 	if err := m.cleanTopics(); err != nil {
 		return nil, err
 	}
-	response := &MessengerResponse{Filters: m.transport.Filters()}
+	response := &MessengerResponse{}
 
 	if m.mailserversDatabase != nil {
-		mailserverTopics, err := m.mailserversDatabase.Topics()
-		if err != nil {
-			return nil, err
-		}
-		response.MailserverTopics = mailserverTopics
-
-		mailserverRanges, err := m.mailserversDatabase.ChatRequestRanges()
-		if err != nil {
-			return nil, err
-		}
-		response.MailserverRanges = mailserverRanges
-
 		mailservers, err := m.mailserversDatabase.Mailservers()
 		if err != nil {
 			return nil, err
@@ -745,22 +735,16 @@ func (m *Messenger) adaptIdentityImageToProtobuf(img *userimage.IdentityImage) *
 
 // handleSharedSecrets process the negotiated secrets received from the encryption layer
 func (m *Messenger) handleSharedSecrets(secrets []*sharedsecret.Secret) error {
-	var result []*transport.Filter
 	for _, secret := range secrets {
 		fSecret := types.NegotiatedSecret{
 			PublicKey: secret.Identity,
 			Key:       secret.Key,
 		}
-		filter, err := m.transport.ProcessNegotiatedSecret(fSecret)
+		_, err := m.transport.ProcessNegotiatedSecret(fSecret)
 		if err != nil {
 			return err
 		}
-		result = append(result, filter)
 	}
-	if m.config.onNegotiatedFilters != nil {
-		m.config.onNegotiatedFilters(result)
-	}
-
 	return nil
 }
 
@@ -938,8 +922,6 @@ func (m *Messenger) handlePushNotificationClientRegistrations(c chan struct{}) {
 // Init analyzes chats and contacts in order to setup filters
 // which are responsible for retrieving messages.
 func (m *Messenger) Init() error {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
 
 	// Seed the for color generation
 	rand.Seed(time.Now().Unix())
@@ -1015,6 +997,16 @@ func (m *Messenger) Init() error {
 		default:
 			return errors.New("invalid chat type")
 		}
+	}
+	// upsert timeline chat
+	err = m.ensureTimelineChat()
+	if err != nil {
+		return err
+	}
+	// uspert profile chat
+	err = m.ensureMyOwnProfileChat()
+	if err != nil {
+		return err
 	}
 
 	// Get chat IDs and public keys from the contacts.
@@ -1148,29 +1140,6 @@ func (m *Messenger) Mailservers() ([]string, error) {
 	return nil, ErrNotImplemented
 }
 
-// This is not accurate, it should not leave transport on removal of chat/group
-// only once there is no more: Group chat with that member, one-to-one chat, contact added by us
-func (m *Messenger) Leave(chat Chat) error {
-	switch chat.ChatType {
-	case ChatTypeOneToOne:
-		pk, err := chat.PublicKey()
-		if err != nil {
-			return err
-		}
-		return m.transport.LeavePrivate(pk)
-	case ChatTypePrivateGroupChat:
-		members, err := chat.MembersAsPublicKeys()
-		if err != nil {
-			return err
-		}
-		return m.transport.LeaveGroup(members)
-	case ChatTypePublic, ChatTypeProfile, ChatTypeTimeline:
-		return m.transport.LeavePublic(chat.Name)
-	default:
-		return errors.New("chat is neither public nor private")
-	}
-}
-
 func (m *Messenger) CreateGroupChatWithMembers(ctx context.Context, name string, members []string) (*MessengerResponse, error) {
 	var response MessengerResponse
 	logger := m.logger.With(zap.String("site", "CreateGroupChatWithMembers"))
@@ -1186,6 +1155,7 @@ func (m *Messenger) CreateGroupChatWithMembers(ctx context.Context, name string,
 	chat.LastClockValue = clock
 
 	chat.updateChatFromGroupMembershipChanges(group)
+	chat.Joined = int64(m.getTimesource().GetCurrentTime())
 
 	clock, _ = chat.NextClockAndTimestamp(m.getTimesource())
 
@@ -1214,6 +1184,11 @@ func (m *Messenger) CreateGroupChatWithMembers(ctx context.Context, name string,
 	if err != nil {
 		return nil, err
 	}
+
+	timestamp := uint32(chat.Timestamp / 1000)
+
+	chat.SyncedTo = timestamp
+	chat.SyncedFrom = timestamp
 
 	m.allChats.Store(chat.ID, &chat)
 
@@ -1715,6 +1690,7 @@ func (m *Messenger) ConfirmJoiningGroup(ctx context.Context, chatID string) (*Me
 	}
 
 	chat.updateChatFromGroupMembershipChanges(group)
+	chat.Joined = int64(m.getTimesource().GetCurrentTime())
 
 	response.AddChat(chat)
 	response.Messages = buildSystemMessages([]v1protocol.MembershipUpdateEvent{event}, m.systemMessagesTranslations)
@@ -2585,10 +2561,16 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 
 						p := msg.ParsedMessage.Interface().(protobuf.SyncInstallationPublicChat)
 						logger.Debug("Handling SyncInstallationPublicChat", zap.Any("message", p))
-						added := m.handler.HandleSyncInstallationPublicChat(messageState, p)
+						addedChat := m.handler.HandleSyncInstallationPublicChat(messageState, p)
 
-						// We re-register as we want to receive mentions from the newly joined public chat
-						if added {
+						// We join and re-register as we want to receive mentions from the newly joined public chat
+						if addedChat != nil {
+							_, err = m.Join(addedChat)
+							if err != nil {
+								allMessagesProcessed = false
+								logger.Error("error joining chat", zap.Error(err))
+								continue
+							}
 							logger.Debug("newly synced public chat, re-registering for push notifications")
 							err := m.reregisterForPushNotifications()
 							if err != nil {
@@ -2900,10 +2882,6 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 		return true
 	})
 
-	for _, filter := range messageState.AllFilters {
-		messageState.Response.Filters = append(messageState.Response.Filters, filter)
-	}
-
 	// Hydrate chat alias and identicon
 	for id := range messageState.Response.chats {
 		chat, _ := messageState.AllChats.Load(id)
@@ -3025,37 +3003,6 @@ func (m *Messenger) RequestHistoricMessages(
 	return m.transport.SendMessagesRequest(ctx, m.mailserver, from, to, cursor, waitForResponse)
 }
 
-func (m *Messenger) RequestHistoricMessagesForFilter(
-	ctx context.Context,
-	from, to uint32,
-	cursor []byte,
-	filter *transport.Filter,
-	waitForResponse bool,
-) ([]byte, error) {
-	if m.mailserver == nil {
-		return nil, errors.New("no mailserver selected")
-	}
-
-	return m.transport.SendMessagesRequestForFilter(ctx, m.mailserver, from, to, cursor, filter, waitForResponse)
-}
-
-func (m *Messenger) LoadFilters(filters []*transport.Filter) ([]*transport.Filter, error) {
-	return m.transport.LoadFilters(filters)
-}
-
-func (m *Messenger) RemoveFilters(filters []*transport.Filter) error {
-	return m.transport.RemoveFilters(filters)
-}
-
-func (m *Messenger) ConfirmMessagesProcessed(messageIDs [][]byte) error {
-	for _, id := range messageIDs {
-		if err := m.encryptor.ConfirmMessageProcessed(id); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (m *Messenger) MessageByID(id string) (*common.Message, error) {
 	return m.persistence.MessageByID(id)
 }
@@ -3096,30 +3043,6 @@ func (m *Messenger) DeleteMessage(id string) error {
 
 func (m *Messenger) DeleteMessagesByChatID(id string) error {
 	return m.persistence.DeleteMessagesByChatID(id)
-}
-
-func (m *Messenger) ClearHistory(id string) (*MessengerResponse, error) {
-	return m.clearHistory(id)
-}
-
-func (m *Messenger) clearHistory(id string) (*MessengerResponse, error) {
-	chat, ok := m.allChats.Load(id)
-	if !ok {
-		return nil, ErrChatNotFound
-	}
-
-	clock, _ := chat.NextClockAndTimestamp(m.transport)
-
-	err := m.persistence.ClearHistory(chat, clock)
-	if err != nil {
-		return nil, err
-	}
-
-	m.allChats.Store(id, chat)
-
-	response := &MessengerResponse{}
-	response.AddChat(chat)
-	return response, nil
 }
 
 // MarkMessagesSeen marks messages with `ids` as seen in the chat `chatID`.

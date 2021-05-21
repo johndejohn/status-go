@@ -130,8 +130,8 @@ func (db sqlitePersistence) saveChat(tx *sql.Tx, chat Chat) error {
 	}
 
 	// Insert record
-	stmt, err := tx.Prepare(`INSERT INTO chats(id, name, color, active, type, timestamp,  deleted_at_clock_value, unviewed_message_count, last_clock_value, last_message, members, membership_updates, muted, invitation_admin, profile, community_id, joined)
-	    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?, ?,?,?, ?)`)
+	stmt, err := tx.Prepare(`INSERT INTO chats(id, name, color, active, type, timestamp,  deleted_at_clock_value, unviewed_message_count, last_clock_value, last_message, members, membership_updates, muted, invitation_admin, profile, community_id, joined, synced_from, synced_to)
+	    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?, ?,?,?,?,?,?)`)
 	if err != nil {
 		return err
 	}
@@ -155,12 +155,19 @@ func (db sqlitePersistence) saveChat(tx *sql.Tx, chat Chat) error {
 		chat.Profile,
 		chat.CommunityID,
 		chat.Joined,
+		chat.SyncedFrom,
+		chat.SyncedTo,
 	)
 
 	if err != nil {
 		return err
 	}
 
+	return err
+}
+
+func (db sqlitePersistence) SetSyncTimestamps(syncedFrom, syncedTo uint32, chatID string) error {
+	_, err := db.db.Exec(`UPDATE chats SET synced_from = ?, synced_to = ? WHERE id = ?`, syncedFrom, syncedTo, chatID)
 	return err
 }
 
@@ -236,7 +243,9 @@ func (db sqlitePersistence) chats(tx *sql.Tx) (chats []*Chat, err error) {
 			chats.invitation_admin,
 			chats.profile,
 			chats.community_id,
-      chats.joined,
+			chats.joined,
+			chats.synced_from,
+			chats.synced_to,
 			contacts.identicon,
 			contacts.alias
 		FROM chats LEFT JOIN contacts ON chats.id = contacts.id
@@ -253,6 +262,8 @@ func (db sqlitePersistence) chats(tx *sql.Tx) (chats []*Chat, err error) {
 			identicon                sql.NullString
 			invitationAdmin          sql.NullString
 			profile                  sql.NullString
+			syncedFrom               sql.NullInt64
+			syncedTo                 sql.NullInt64
 			chat                     Chat
 			encodedMembers           []byte
 			encodedMembershipUpdates []byte
@@ -276,6 +287,8 @@ func (db sqlitePersistence) chats(tx *sql.Tx) (chats []*Chat, err error) {
 			&profile,
 			&chat.CommunityID,
 			&chat.Joined,
+			&syncedFrom,
+			&syncedTo,
 			&identicon,
 			&alias,
 		)
@@ -304,6 +317,14 @@ func (db sqlitePersistence) chats(tx *sql.Tx) (chats []*Chat, err error) {
 		err = membershipUpdatesDecoder.Decode(&chat.MembershipUpdates)
 		if err != nil {
 			return
+		}
+
+		if syncedFrom.Valid {
+			chat.SyncedFrom = uint32(syncedFrom.Int64)
+		}
+
+		if syncedTo.Valid {
+			chat.SyncedTo = uint32(syncedTo.Int64)
 		}
 
 		// Restore last message

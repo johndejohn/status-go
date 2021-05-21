@@ -3,7 +3,6 @@ package wakuext
 import (
 	"context"
 	"crypto/ecdsa"
-	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -121,53 +120,9 @@ func (api *PublicAPI) RequestMessages(_ context.Context, r ext.MessagesRequest) 
 	}
 	hash := envelope.Hash()
 
-	if !r.Force {
-		err = api.service.RequestsRegistry().Register(hash, r.Topics)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	if err := api.service.w.RequestHistoricMessagesWithTimeout(mailServerNode.ID().Bytes(), envelope, r.Timeout*time.Second); err != nil {
-		if !r.Force {
-			api.service.RequestsRegistry().Unregister(hash)
-		}
 		return nil, err
 	}
 
 	return hash[:], nil
-}
-
-// RequestMessagesSync repeats MessagesRequest using configuration in retry conf.
-func (api *PublicAPI) RequestMessagesSync(conf ext.RetryConfig, r ext.MessagesRequest) (ext.MessagesResponse, error) {
-	var resp ext.MessagesResponse
-
-	events := make(chan types.EnvelopeEvent, 10)
-	var (
-		requestID types.HexBytes
-		err       error
-		retries   int
-	)
-	for retries <= conf.MaxRetries {
-		sub := api.service.w.SubscribeEnvelopeEvents(events)
-		r.Timeout = conf.BaseTimeout + conf.StepTimeout*time.Duration(retries)
-		timeout := r.Timeout
-		// FIXME this weird conversion is required because MessagesRequest expects seconds but defines time.Duration
-		r.Timeout = time.Duration(int(r.Timeout.Seconds()))
-		requestID, err = api.RequestMessages(context.Background(), r)
-		if err != nil {
-			sub.Unsubscribe()
-			return resp, err
-		}
-		mailServerResp, err := ext.WaitForExpiredOrCompleted(types.BytesToHash(requestID), events, timeout)
-		sub.Unsubscribe()
-		if err == nil {
-			resp.Cursor = hex.EncodeToString(mailServerResp.Cursor)
-			resp.Error = mailServerResp.Error
-			return resp, nil
-		}
-		retries++
-		api.log.Error("[RequestMessagesSync] failed", "err", err, "retries", retries)
-	}
-	return resp, fmt.Errorf("failed to request messages after %d retries", retries)
 }

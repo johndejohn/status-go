@@ -37,6 +37,116 @@ func (m *Messenger) ActiveChats() []*Chat {
 	return chats
 }
 
+func (m *Messenger) CreatePublicChat(request *requests.CreatePublicChat) (*MessengerResponse, error) {
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+
+	chatID := request.ID
+
+	chat, ok := m.allChats.Load(chatID)
+	if !ok {
+		chat = CreatePublicChat(chatID, m.getTimesource())
+
+	}
+	chat.Active = true
+
+	// Save topics
+	_, err := m.Join(chat)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store chat
+	m.allChats.Store(chat.ID, chat)
+
+	willSync, err := m.scheduleSyncChat(chat)
+	if err != nil {
+		return nil, err
+	}
+
+	// We set the synced to, synced from to the default time
+	if !willSync {
+		timestamp := uint32(m.getTimesource().GetCurrentTime()/1000) - defaultSyncInterval
+		chat.SyncedTo = timestamp
+		chat.SyncedFrom = timestamp
+	}
+
+	err = m.saveChat(chat)
+	if err != nil {
+		return nil, err
+	}
+
+	// Sync if it was created
+	if !ok {
+		if err := m.syncPublicChat(context.Background(), chat); err != nil {
+			return nil, err
+		}
+	}
+
+	response := &MessengerResponse{}
+	response.AddChat(chat)
+
+	return response, nil
+}
+
+func (m *Messenger) CreateProfileChat(request *requests.CreateProfileChat) (*MessengerResponse, error) {
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+
+	publicKey, err := common.HexToPubkey(request.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	chat := m.buildProfileChat(request.ID)
+
+	chat.Active = true
+
+	// Save topics
+	_, err = m.Join(chat)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check contact code
+	filter, err := m.transport.JoinPrivate(publicKey)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store chat
+	m.allChats.Store(chat.ID, chat)
+
+	response := &MessengerResponse{}
+	response.AddChat(chat)
+
+	willSync, err := m.scheduleSyncChat(chat)
+	if err != nil {
+		return nil, err
+	}
+
+	// We set the synced to, synced from to the default time
+	if !willSync {
+		timestamp := uint32(m.getTimesource().GetCurrentTime()/1000) - defaultSyncInterval
+		chat.SyncedTo = timestamp
+		chat.SyncedFrom = timestamp
+	}
+
+	_, err = m.scheduleSyncFilters([]*transport.Filter{filter})
+	if err != nil {
+		return nil, err
+	}
+
+	err = m.saveChat(chat)
+	if err != nil {
+		return nil, err
+	}
+
+	return response, nil
+}
+
 func (m *Messenger) CreateOneToOneChat(request *requests.CreateOneToOneChat) (*MessengerResponse, error) {
 	if err := request.Validate(); err != nil {
 		return nil, err
@@ -59,19 +169,28 @@ func (m *Messenger) CreateOneToOneChat(request *requests.CreateOneToOneChat) (*M
 		return nil, err
 	}
 
-	err = m.saveChat(chat)
+	// TODO(Samyoul) remove storing of an updated reference pointer?
+	m.allChats.Store(chatID, chat)
+
+	response := &MessengerResponse{}
+	response.AddChat(chat)
+
+	willSync, err := m.scheduleSyncFilters(filters)
 	if err != nil {
 		return nil, err
 	}
 
-	// TODO(Samyoul) remove storing of an updated reference pointer?
-	m.allChats.Store(chatID, chat)
-
-	response := &MessengerResponse{
-		Filters: filters,
+	// We set the synced to, synced from to the default time
+	if !willSync {
+		timestamp := uint32(m.getTimesource().GetCurrentTime()/1000) - defaultSyncInterval
+		chat.SyncedTo = timestamp
+		chat.SyncedFrom = timestamp
 	}
-	response.AddChat(chat)
 
+	err = m.saveChat(chat)
+	if err != nil {
+		return nil, err
+	}
 	return response, nil
 
 }
@@ -99,8 +218,12 @@ func (m *Messenger) SaveChat(chat *Chat) error {
 	return m.saveChat(chat)
 }
 
-func (m *Messenger) DeactivateChat(chatID string) (*MessengerResponse, error) {
-	return m.deactivateChat(chatID)
+func (m *Messenger) DeactivateChat(request *requests.DeactivateChat) (*MessengerResponse, error) {
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+
+	return m.deactivateChat(request.ID)
 }
 
 func (m *Messenger) deactivateChat(chatID string) (*MessengerResponse, error) {
@@ -122,6 +245,11 @@ func (m *Messenger) deactivateChat(chatID string) (*MessengerResponse, error) {
 	// receive PN from mentions in this chat anymore
 	if chat.Public() {
 		err := m.reregisterForPushNotifications()
+		if err != nil {
+			return nil, err
+		}
+
+		err = m.transport.ClearProcessedMessageIDsCache()
 		if err != nil {
 			return nil, err
 		}
@@ -227,4 +355,88 @@ func (m *Messenger) Join(chat *Chat) ([]*transport.Filter, error) {
 	default:
 		return nil, errors.New("chat is neither public nor private")
 	}
+}
+
+func (m *Messenger) buildProfileChat(id string) *Chat {
+	// Create the corresponding profile chat
+	profileChatID := buildProfileChatID(id)
+	profileChat, ok := m.allChats.Load(profileChatID)
+
+	if !ok {
+		profileChat = CreateProfileChat(id, m.getTimesource())
+	}
+
+	return profileChat
+
+}
+
+func (m *Messenger) ensureTimelineChat() error {
+	chat, err := m.persistence.Chat(timelineChatID)
+	if err != nil {
+		return err
+	}
+
+	if chat != nil {
+		return nil
+	}
+
+	chat = CreateTimelineChat(m.getTimesource())
+	m.allChats.Store(timelineChatID, chat)
+	return m.saveChat(chat)
+}
+
+func (m *Messenger) ensureMyOwnProfileChat() error {
+	chatID := common.PubkeyToHex(&m.identity.PublicKey)
+	_, ok := m.allChats.Load(chatID)
+	if ok {
+		return nil
+	}
+
+	chat := m.buildProfileChat(chatID)
+
+	chat.Active = true
+
+	// Save topics
+	_, err := m.Join(chat)
+	if err != nil {
+		return err
+	}
+
+	return m.saveChat(chat)
+}
+
+func (m *Messenger) ClearHistory(request *requests.ClearHistory) (*MessengerResponse, error) {
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+
+	return m.clearHistory(request.ID)
+}
+
+func (m *Messenger) clearHistory(id string) (*MessengerResponse, error) {
+	chat, ok := m.allChats.Load(id)
+	if !ok {
+		return nil, ErrChatNotFound
+	}
+
+	clock, _ := chat.NextClockAndTimestamp(m.transport)
+
+	err := m.persistence.ClearHistory(chat, clock)
+	if err != nil {
+		return nil, err
+	}
+
+	if chat.Public() {
+
+		err = m.transport.ClearProcessedMessageIDsCache()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	m.allChats.Store(id, chat)
+
+	response := &MessengerResponse{}
+	response.AddChat(chat)
+	return response, nil
 }

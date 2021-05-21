@@ -1,5 +1,3 @@
-// +build !nimbus
-
 package node
 
 import (
@@ -25,10 +23,9 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/enr"
 
-	"github.com/status-im/status-go/bridge"
+	"github.com/status-im/status-go/connection"
 	"github.com/status-im/status-go/db"
 	"github.com/status-im/status-go/discovery"
-	"github.com/status-im/status-go/logutils"
 	"github.com/status-im/status-go/params"
 	"github.com/status-im/status-go/peers"
 	"github.com/status-im/status-go/rpc"
@@ -36,12 +33,10 @@ import (
 	localnotifications "github.com/status-im/status-go/services/local-notifications"
 	"github.com/status-im/status-go/services/peer"
 	"github.com/status-im/status-go/services/permissions"
-	"github.com/status-im/status-go/services/shhext"
 	"github.com/status-im/status-go/services/status"
 	"github.com/status-im/status-go/services/wakuext"
 	"github.com/status-im/status-go/services/wallet"
 	"github.com/status-im/status-go/waku"
-	"github.com/status-im/status-go/whisper"
 )
 
 // tickerResolution is the delta to check blockchain sync progress.
@@ -71,8 +66,6 @@ type StatusNode struct {
 	register  *peers.Register
 	peerPool  *peers.PeerPool
 	db        *leveldb.DB // used as a cache for PeerPool
-
-	bridge *bridge.Bridge // Whisper-Waku bridge
 
 	log log.Logger
 }
@@ -181,10 +174,6 @@ func (n *StatusNode) startWithDB(config *params.NodeConfig, accs *accounts.Manag
 		return err
 	}
 
-	if err := n.setupBridge(); err != nil {
-		return err
-	}
-
 	return nil
 }
 
@@ -223,28 +212,6 @@ func (n *StatusNode) setupRPCClient() (err error) {
 	n.rpcPrivateClient, err = rpc.NewClient(gethNodePrivateClient, n.config.UpstreamConfig)
 
 	return
-}
-
-func (n *StatusNode) setupBridge() error {
-	if !n.config.BridgeConfig.Enabled {
-		log.Info("Whisper-Waku bridge is disabled")
-		return nil
-	}
-	var shh *whisper.Whisper
-	if err := n.gethService(&shh); err != nil {
-		return fmt.Errorf("setup bridge: failed to get Whisper: %v", err)
-	}
-	var wak *waku.Waku
-	if err := n.gethService(&wak); err != nil {
-		return fmt.Errorf("setup bridge: failed to get Waku: %v", err)
-	}
-
-	n.bridge = bridge.New(shh, wak, logutils.ZapLogger())
-	n.bridge.Start()
-
-	log.Info("setup a Whisper-Waku bridge successfully")
-
-	return nil
 }
 
 func (n *StatusNode) discoveryEnabled() bool {
@@ -384,11 +351,6 @@ func (n *StatusNode) stop() error {
 		n.register = nil
 		n.peerPool = nil
 		n.discovery = nil
-	}
-
-	if n.bridge != nil {
-		n.bridge.Cancel()
-		n.bridge = nil
 	}
 
 	if err := n.gethNode.Stop(); err != nil {
@@ -609,38 +571,12 @@ func (n *StatusNode) PeerService() (st *peer.Service, err error) {
 	return
 }
 
-// WhisperService exposes reference to Whisper service running on top of the node
-func (n *StatusNode) WhisperService() (w *whisper.Whisper, err error) {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-
-	err = n.gethService(&w)
-	if err == node.ErrServiceUnknown {
-		err = ErrServiceUnknown
-	}
-
-	return
-}
-
-// WakuService exposes reference to Whisper service running on top of the node
+// WakuService exposes reference to Waku service running on top of the node
 func (n *StatusNode) WakuService() (w *waku.Waku, err error) {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 
 	err = n.gethService(&w)
-	if err == node.ErrServiceUnknown {
-		err = ErrServiceUnknown
-	}
-
-	return
-}
-
-// ShhExtService exposes reference to shh extension service running on top of the node
-func (n *StatusNode) ShhExtService() (s *shhext.Service, err error) {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-
-	err = n.gethService(&s)
 	if err == node.ErrServiceUnknown {
 		err = ErrServiceUnknown
 	}
@@ -659,6 +595,16 @@ func (n *StatusNode) WakuExtService() (s *wakuext.Service, err error) {
 	}
 
 	return
+}
+
+func (n *StatusNode) ConnectionChanged(state connection.State) error {
+	service, err := n.WakuExtService()
+	if err != nil {
+		return err
+	}
+
+	service.ConnectionChanged(state)
+	return nil
 }
 
 // WalletService returns wallet.Service instance if it was started.

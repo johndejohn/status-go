@@ -20,6 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/rpc"
 
+	"github.com/status-im/status-go/connection"
 	"github.com/status-im/status-go/db"
 	coretypes "github.com/status-im/status-go/eth-node/core/types"
 	"github.com/status-im/status-go/eth-node/types"
@@ -34,16 +35,8 @@ import (
 	localnotifications "github.com/status-im/status-go/services/local-notifications"
 	mailserversDB "github.com/status-im/status-go/services/mailservers"
 	"github.com/status-im/status-go/services/wallet"
-	"github.com/status-im/status-go/signal"
 
 	"go.uber.org/zap"
-)
-
-const (
-	// defaultConnectionsTarget used in Service.Start if configured connection target is 0.
-	defaultConnectionsTarget = 1
-	// defaultTimeoutWaitAdded is a timeout to use to establish initial connections.
-	defaultTimeoutWaitAdded = 5 * time.Second
 )
 
 // EnvelopeEventsHandler used for two different event types.
@@ -56,23 +49,18 @@ type EnvelopeEventsHandler interface {
 
 // Service is a service that provides some additional API to whisper-based protocols like Whisper or Waku.
 type Service struct {
-	messenger        *protocol.Messenger
-	identity         *ecdsa.PrivateKey
-	cancelMessenger  chan struct{}
-	storage          db.TransactionalStorage
-	n                types.Node
-	config           params.ShhextConfig
-	mailMonitor      *MailRequestMonitor
-	requestsRegistry *RequestsRegistry
-	server           *p2p.Server
-	eventSub         mailservers.EnvelopeEventSubscriber
-	peerStore        *mailservers.PeerStore
-	cache            *mailservers.Cache
-	connManager      *mailservers.ConnectionManager
-	lastUsedMonitor  *mailservers.LastUsedConnectionMonitor
-	accountsDB       *accounts.Database
-	multiAccountsDB  *multiaccounts.Database
-	account          *multiaccounts.Account
+	messenger       *protocol.Messenger
+	identity        *ecdsa.PrivateKey
+	cancelMessenger chan struct{}
+	storage         db.TransactionalStorage
+	n               types.Node
+	config          params.ShhextConfig
+	mailMonitor     *MailRequestMonitor
+	server          *p2p.Server
+	peerStore       *mailservers.PeerStore
+	accountsDB      *accounts.Database
+	multiAccountsDB *multiaccounts.Database
+	account         *multiaccounts.Account
 }
 
 // Make sure that Service implements node.Service interface.
@@ -83,20 +71,16 @@ func New(
 	n types.Node,
 	ldb *leveldb.DB,
 	mailMonitor *MailRequestMonitor,
-	reqRegistry *RequestsRegistry,
 	eventSub mailservers.EnvelopeEventSubscriber,
 ) *Service {
 	cache := mailservers.NewCache(ldb)
 	peerStore := mailservers.NewPeerStore(cache)
 	return &Service{
-		storage:          db.NewLevelDBStorage(ldb),
-		n:                n,
-		config:           config,
-		mailMonitor:      mailMonitor,
-		requestsRegistry: reqRegistry,
-		peerStore:        peerStore,
-		cache:            mailservers.NewCache(ldb),
-		eventSub:         eventSub,
+		storage:     db.NewLevelDBStorage(ldb),
+		n:           n,
+		config:      config,
+		mailMonitor: mailMonitor,
+		peerStore:   peerStore,
 	}
 }
 
@@ -105,10 +89,6 @@ func (s *Service) NodeID() *ecdsa.PrivateKey {
 		return nil
 	}
 	return s.server.PrivateKey
-}
-
-func (s *Service) RequestsRegistry() *RequestsRegistry {
-	return s.requestsRegistry
 }
 
 func (s *Service) GetPeer(rawURL string) (*enode.Node, error) {
@@ -315,10 +295,6 @@ func (s *Service) verifyTransactionLoop(tick time.Duration, cancel <-chan struct
 	}
 }
 
-func (s *Service) ConfirmMessagesProcessed(messageIDs [][]byte) error {
-	return s.messenger.ConfirmMessagesProcessed(messageIDs)
-}
-
 func (s *Service) EnableInstallation(installationID string) error {
 	return s.messenger.EnableInstallation(installationID)
 }
@@ -333,11 +309,11 @@ func (s *Service) UpdateMailservers(nodes []*enode.Node) error {
 	if len(nodes) > 0 && s.messenger != nil {
 		s.messenger.SetMailserver(nodes[0].ID().Bytes())
 	}
+	for _, peer := range nodes {
+		s.server.AddPeer(peer)
+	}
 	if err := s.peerStore.Update(nodes); err != nil {
 		return err
-	}
-	if s.connManager != nil {
-		s.connManager.Notify(nodes)
 	}
 	return nil
 }
@@ -355,27 +331,6 @@ func (s *Service) APIs() []rpc.API {
 // Start is run when a service is started.
 // It does nothing in this case but is required by `node.Service` interface.
 func (s *Service) Start(server *p2p.Server) error {
-	if s.config.EnableConnectionManager {
-		connectionsTarget := s.config.ConnectionTarget
-		if connectionsTarget == 0 {
-			connectionsTarget = defaultConnectionsTarget
-		}
-		maxFailures := s.config.MaxServerFailures
-		// if not defined change server on first expired event
-		if maxFailures == 0 {
-			maxFailures = 1
-		}
-		s.connManager = mailservers.NewConnectionManager(server, s.eventSub, connectionsTarget, maxFailures, defaultTimeoutWaitAdded)
-		s.connManager.Start()
-		if err := mailservers.EnsureUsedRecordsAddedFirst(s.peerStore, s.connManager); err != nil {
-			return err
-		}
-	}
-	if s.config.EnableLastUsedMonitor {
-		s.lastUsedMonitor = mailservers.NewLastUsedConnectionMonitor(s.peerStore, s.cache, s.eventSub)
-		s.lastUsedMonitor.Start()
-	}
-	s.mailMonitor.Start()
 	s.server = server
 	return nil
 }
@@ -383,15 +338,6 @@ func (s *Service) Start(server *p2p.Server) error {
 // Stop is run when a service is stopped.
 func (s *Service) Stop() error {
 	log.Info("Stopping shhext service")
-	if s.config.EnableConnectionManager {
-		s.connManager.Stop()
-	}
-	if s.config.EnableLastUsedMonitor {
-		s.lastUsedMonitor.Stop()
-	}
-	s.requestsRegistry.Clear()
-	s.mailMonitor.Stop()
-
 	if s.cancelMessenger != nil {
 		select {
 		case <-s.cancelMessenger:
@@ -410,27 +356,6 @@ func (s *Service) Stop() error {
 	}
 
 	return nil
-}
-
-func onNegotiatedFilters(filters []*transport.Filter) {
-	var signalFilters []*signal.Filter
-	for _, filter := range filters {
-
-		signalFilter := &signal.Filter{
-			ChatID:   filter.ChatID,
-			SymKeyID: filter.SymKeyID,
-			Listen:   filter.Listen,
-			FilterID: filter.FilterID,
-			Identity: filter.Identity,
-			Topic:    filter.Topic,
-		}
-
-		signalFilters = append(signalFilters, signalFilter)
-	}
-	if len(filters) != 0 {
-		handler := PublisherSignalHandler{}
-		handler.FilterAdded(signalFilters)
-	}
 }
 
 func buildMessengerOptions(
@@ -452,7 +377,6 @@ func buildMessengerOptions(
 		protocol.WithMailserversDatabase(mailserversDB.NewDB(db)),
 		protocol.WithAccount(account),
 		protocol.WithEnvelopesMonitorConfig(envelopesMonitorConfig),
-		protocol.WithOnNegotiatedFilters(onNegotiatedFilters),
 		protocol.WithSignalsHandler(messengerSignalsHandler),
 		protocol.WithENSVerificationConfig(publishMessengerResponse, config.VerifyENSURL, config.VerifyENSContractAddress),
 	}
@@ -491,4 +415,10 @@ func buildMessengerOptions(
 	}
 
 	return options, nil
+}
+
+func (s *Service) ConnectionChanged(state connection.State) {
+	if s.messenger != nil {
+		s.messenger.ConnectionChanged(state)
+	}
 }

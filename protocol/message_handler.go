@@ -131,6 +131,9 @@ func (m *MessageHandler) HandleMembershipUpdate(messageState *ReceivedMessageSta
 		// unless is coming from us or a contact
 		isActive := messageState.CurrentMessageState.Contact.IsAdded() || messageState.CurrentMessageState.Contact.ID == ourKey
 		newChat.Active = isActive
+		timestamp := uint32(newChat.Timestamp / 1000)
+		newChat.SyncedTo = timestamp
+		newChat.SyncedFrom = timestamp
 		chat = &newChat
 	} else {
 		existingGroup, err := newProtocolGroupFromChat(chat)
@@ -312,19 +315,23 @@ func (m *MessageHandler) HandleSyncInstallationContact(state *ReceivedMessageSta
 	return nil
 }
 
-func (m *MessageHandler) HandleSyncInstallationPublicChat(state *ReceivedMessageState, message protobuf.SyncInstallationPublicChat) bool {
+func (m *MessageHandler) HandleSyncInstallationPublicChat(state *ReceivedMessageState, message protobuf.SyncInstallationPublicChat) *Chat {
 	chatID := message.Id
 	_, ok := state.AllChats.Load(chatID)
 	if ok {
-		return false
+		return nil
 	}
 
 	chat := CreatePublicChat(chatID, state.Timesource)
 
-	state.AllChats.Store(chat.ID, chat)
-	state.Response.AddChat(chat)
+	timestamp := uint32(state.Timesource.GetCurrentTime() / 1000)
+	chat.SyncedTo = timestamp
+	chat.SyncedFrom = timestamp
 
-	return true
+	state.AllChats.Store(chat.ID, chat)
+
+	state.Response.AddChat(chat)
+	return chat
 }
 
 func (m *MessageHandler) HandlePinMessage(state *ReceivedMessageState, message protobuf.PinMessage) error {
