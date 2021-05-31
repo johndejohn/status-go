@@ -130,7 +130,13 @@ func (m *Messenger) filtersForChat(chatID string) ([]*transport.Filter, error) {
 			publicKeys = append(publicKeys, m.ID)
 		}
 
+		m.logger.Info("getting filters for", zap.Any("publicKeys", publicKeys))
+
 		filters = m.transport.FiltersByIdentities(publicKeys)
+
+		m.logger.Info("all filters", zap.Any("filters", m.transport.Filters()))
+
+		m.logger.Info("fetched filters", zap.Any("filter", filters))
 
 	} else {
 		filter := m.transport.FilterByChatID(chatID)
