@@ -167,7 +167,12 @@ func (m *Messenger) joinCommunity(communityID types.HexBytes) (*MessengerRespons
 	}
 
 	if !willSync {
-		timestamp := uint32(m.getTimesource().GetCurrentTime()/1000) - defaultSyncInterval
+		defaultSyncPeriod, err := m.settings.GetDefaultSyncPeriod()
+		if err != nil {
+			return nil, err
+		}
+
+		timestamp := uint32(m.getTimesource().GetCurrentTime()/1000) - defaultSyncPeriod
 		for idx := range chats {
 			chats[idx].SyncedTo = timestamp
 			chats[idx].SyncedFrom = timestamp
@@ -389,6 +394,37 @@ func (m *Messenger) CreateCommunityChat(communityID types.HexBytes, c *protobuf.
 	var chatIDs []string
 	for chatID, chat := range changes.ChatsAdded {
 		c := CreateCommunityChat(community.IDString(), chatID, chat, m.getTimesource())
+		chats = append(chats, c)
+		chatIDs = append(chatIDs, c.ID)
+		response.AddChat(c)
+	}
+
+	// Load filters
+	filters, err := m.transport.InitPublicFilters(chatIDs)
+	if err != nil {
+		return nil, err
+	}
+	_, err = m.scheduleSyncFilters(filters)
+	if err != nil {
+		return nil, err
+	}
+
+	return &response, m.saveChats(chats)
+}
+
+func (m *Messenger) EditCommunityChat(communityID types.HexBytes, chatID string, c *protobuf.CommunityChat) (*MessengerResponse, error) {
+	var response MessengerResponse
+	community, changes, err := m.communitiesManager.EditChat(communityID, chatID, c)
+	if err != nil {
+		return nil, err
+	}
+	response.AddCommunity(community)
+	response.CommunityChanges = []*communities.CommunityChanges{changes}
+
+	var chats []*Chat
+	var chatIDs []string
+	for chatID, chat := range changes.ChatsModified {
+		c := CreateCommunityChat(community.IDString(), chatID, chat.ChatModified, m.getTimesource())
 		chats = append(chats, c)
 		chatIDs = append(chatIDs, c.ID)
 		response.AddChat(c)
@@ -684,4 +720,56 @@ func (m *Messenger) passStoredCommunityInfoToSignalHandler(communityID string) {
 
 	m.config.messengerSignalsHandler.CommunityInfoFound(community)
 	m.forgetCommunityRequest(communityID)
+}
+
+// handleCommunityDescription handles an community description
+func (m *Messenger) handleCommunityDescription(state *ReceivedMessageState, signer *ecdsa.PublicKey, description protobuf.CommunityDescription, rawPayload []byte) error {
+	communityResponse, err := m.communitiesManager.HandleCommunityDescriptionMessage(signer, &description, rawPayload)
+	if err != nil {
+		return err
+	}
+
+	community := communityResponse.Community
+
+	state.Response.AddCommunity(community)
+	state.Response.CommunityChanges = append(state.Response.CommunityChanges, communityResponse.Changes)
+
+	// If we haven't joined the org, nothing to do
+	if !community.Joined() {
+		return nil
+	}
+
+	// Update relevant chats names and add new ones
+	// Currently removal is not supported
+	chats := CreateCommunityChats(community, state.Timesource)
+	var chatIDs []string
+	for i, chat := range chats {
+
+		oldChat, ok := state.AllChats.Load(chat.ID)
+		if !ok {
+			// Beware, don't use the reference in the range (i.e chat) as it's a shallow copy
+			state.AllChats.Store(chat.ID, chats[i])
+
+			state.Response.AddChat(chat)
+			chatIDs = append(chatIDs, chat.ID)
+			// Update name, currently is the only field is mutable
+		} else if oldChat.Name != chat.Name {
+			oldChat.Name = chat.Name
+			// TODO(samyoul) remove storing of an updated reference pointer?
+			state.AllChats.Store(chat.ID, oldChat)
+			state.Response.AddChat(chat)
+		}
+	}
+
+	// Load transport filters
+	filters, err := m.transport.InitPublicFilters(chatIDs)
+	if err != nil {
+		return err
+	}
+	_, err = m.scheduleSyncFilters(filters)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

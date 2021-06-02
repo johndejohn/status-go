@@ -37,6 +37,18 @@ func (m *Messenger) ActiveChats() []*Chat {
 	return chats
 }
 
+func (m *Messenger) initChatSyncFields(chat *Chat) error {
+	defaultSyncPeriod, err := m.settings.GetDefaultSyncPeriod()
+	if err != nil {
+		return err
+	}
+	timestamp := uint32(m.getTimesource().GetCurrentTime()/1000) - defaultSyncPeriod
+	chat.SyncedTo = timestamp
+	chat.SyncedFrom = timestamp
+
+	return nil
+}
+
 func (m *Messenger) CreatePublicChat(request *requests.CreatePublicChat) (*MessengerResponse, error) {
 	if err := request.Validate(); err != nil {
 		return nil, err
@@ -50,6 +62,7 @@ func (m *Messenger) CreatePublicChat(request *requests.CreatePublicChat) (*Messe
 
 	}
 	chat.Active = true
+	chat.DeletedAtClockValue = 0
 
 	// Save topics
 	_, err := m.Join(chat)
@@ -67,9 +80,9 @@ func (m *Messenger) CreatePublicChat(request *requests.CreatePublicChat) (*Messe
 
 	// We set the synced to, synced from to the default time
 	if !willSync {
-		timestamp := uint32(m.getTimesource().GetCurrentTime()/1000) - defaultSyncInterval
-		chat.SyncedTo = timestamp
-		chat.SyncedFrom = timestamp
+		if err := m.initChatSyncFields(chat); err != nil {
+			return nil, err
+		}
 	}
 
 	err = m.saveChat(chat)
@@ -129,9 +142,9 @@ func (m *Messenger) CreateProfileChat(request *requests.CreateProfileChat) (*Mes
 
 	// We set the synced to, synced from to the default time
 	if !willSync {
-		timestamp := uint32(m.getTimesource().GetCurrentTime()/1000) - defaultSyncInterval
-		chat.SyncedTo = timestamp
-		chat.SyncedFrom = timestamp
+		if err := m.initChatSyncFields(chat); err != nil {
+			return nil, err
+		}
 	}
 
 	_, err = m.scheduleSyncFilters([]*transport.Filter{filter})
@@ -182,9 +195,9 @@ func (m *Messenger) CreateOneToOneChat(request *requests.CreateOneToOneChat) (*M
 
 	// We set the synced to, synced from to the default time
 	if !willSync {
-		timestamp := uint32(m.getTimesource().GetCurrentTime()/1000) - defaultSyncInterval
-		chat.SyncedTo = timestamp
-		chat.SyncedFrom = timestamp
+		if err := m.initChatSyncFields(chat); err != nil {
+			return nil, err
+		}
 	}
 
 	err = m.saveChat(chat)
