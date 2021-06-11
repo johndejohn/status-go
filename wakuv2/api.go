@@ -232,7 +232,7 @@ func (api *PublicWakuAPI) Post(ctx context.Context, req NewMessage) (hexutil.Byt
 		keyInfo.PubKey = *pubK
 	}
 
-	var version uint32 = 1 // Use wakuv1 encryption
+	var version uint32 = 0 // Use wakuv1 encryption
 
 	p := new(node.Payload)
 	p.Data = req.Payload
@@ -246,7 +246,7 @@ func (api *PublicWakuAPI) Post(ctx context.Context, req NewMessage) (hexutil.Byt
 	wakuMsg := &pb.WakuMessage{
 		Payload:      payload,
 		Version:      version,
-		ContentTopic: req.Topic.String(),
+		ContentTopic: "/toy-chat/2/huilong/proto", //req.Topic.String(),
 		Timestamp:    float64(api.w.CurrentTime().UnixNano()) / 1000000000,
 	}
 
