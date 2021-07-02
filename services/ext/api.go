@@ -450,6 +450,11 @@ func (api *PublicAPI) RemoveUserFromCommunity(communityID types.HexBytes, userPu
 	return api.service.messenger.RemoveUserFromCommunity(communityID, userPublicKey)
 }
 
+// SetCommunityMuted sets the community's muted value
+func (api *PublicAPI) SetCommunityMuted(communityID types.HexBytes, muted bool) error {
+	return api.service.messenger.SetMuted(communityID, muted)
+}
+
 // BanUserFromCommunity removes the user with pk from the community with ID
 func (api *PublicAPI) BanUserFromCommunity(request *requests.BanUserFromCommunity) (*protocol.MessengerResponse, error) {
 	return api.service.messenger.BanUserFromCommunity(request)
@@ -589,6 +594,10 @@ func (api *PublicAPI) ReSendChatMessage(ctx context.Context, messageID string) e
 
 func (api *PublicAPI) SendChatMessages(ctx context.Context, messages []*common.Message) (*protocol.MessengerResponse, error) {
 	return api.service.messenger.SendChatMessages(ctx, messages)
+}
+
+func (api *PublicAPI) EditMessage(ctx context.Context, request *requests.EditMessage) (*protocol.MessengerResponse, error) {
+	return api.service.messenger.EditMessage(ctx, request)
 }
 
 func (api *PublicAPI) SendPinMessage(ctx context.Context, message *common.PinMessage) (*protocol.MessengerResponse, error) {

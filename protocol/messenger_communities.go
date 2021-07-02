@@ -18,8 +18,6 @@ import (
 	"github.com/status-im/status-go/protocol/transport"
 )
 
-const communityInvitationText = "Upgrade to see a community invitation"
-
 func (m *Messenger) publishOrg(org *communities.Community) error {
 	m.logger.Debug("publishing org", zap.String("org-id", org.IDString()), zap.Any("org", org))
 	payload, err := org.MarshaledDescription()
@@ -182,6 +180,10 @@ func (m *Messenger) joinCommunity(communityID types.HexBytes) (*MessengerRespons
 	response.AddCommunity(community)
 
 	return response, m.saveChats(chats)
+}
+
+func (m *Messenger) SetMuted(communityID types.HexBytes, muted bool) error {
+	return m.communitiesManager.SetMuted(communityID, muted)
 }
 
 func (m *Messenger) RequestToJoinCommunity(request *requests.RequestToJoinCommunity) (*MessengerResponse, error) {
@@ -519,6 +521,10 @@ func (m *Messenger) InviteUsersToCommunity(request *requests.InviteUsersToCommun
 	var messages []*common.Message
 
 	var publicKeys []*ecdsa.PublicKey
+	community, err := m.communitiesManager.GetByID(request.CommunityID)
+	if err != nil {
+		return nil, err
+	}
 	for _, pkBytes := range request.Users {
 		publicKey, err := common.HexToPubkey(pkBytes.String())
 		if err != nil {
@@ -529,7 +535,7 @@ func (m *Messenger) InviteUsersToCommunity(request *requests.InviteUsersToCommun
 		message := &common.Message{}
 		message.ChatId = pkBytes.String()
 		message.CommunityID = request.CommunityID.String()
-		message.Text = communityInvitationText
+		message.Text = fmt.Sprintf("You have been invited to community %s", community.Name())
 		messages = append(messages, message)
 		r, err := m.CreateOneToOneChat(&requests.CreateOneToOneChat{ID: pkBytes})
 		if err != nil {
@@ -541,7 +547,7 @@ func (m *Messenger) InviteUsersToCommunity(request *requests.InviteUsersToCommun
 		}
 	}
 
-	community, err := m.communitiesManager.InviteUsersToCommunity(request.CommunityID, publicKeys)
+	community, err = m.communitiesManager.InviteUsersToCommunity(request.CommunityID, publicKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -564,12 +570,17 @@ func (m *Messenger) ShareCommunity(request *requests.ShareCommunity) (*Messenger
 	}
 	response := &MessengerResponse{}
 
+	community, err := m.communitiesManager.GetByID(request.CommunityID)
+	if err != nil {
+		return nil, err
+	}
+
 	var messages []*common.Message
 	for _, pk := range request.Users {
 		message := &common.Message{}
 		message.ChatId = pk.String()
 		message.CommunityID = request.CommunityID.String()
-		message.Text = communityInvitationText
+		message.Text = fmt.Sprintf("Community %s has been shared with you", community.Name())
 		messages = append(messages, message)
 		r, err := m.CreateOneToOneChat(&requests.CreateOneToOneChat{ID: pk})
 		if err != nil {
