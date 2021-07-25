@@ -238,6 +238,7 @@ func (b *StatusNode) wakuV2Service(nodeKey string, wakuCfg *params.WakuV2Config,
 			Port:                   wakuCfg.Port,
 			BootNodes:              clusterCfg.WakuNodes,
 			StoreNodes:             clusterCfg.WakuStoreNodes,
+			PersistPeers:           wakuCfg.PersistPeers,
 		}
 
 		if wakuCfg.MaxMessageSize > 0 {
@@ -250,7 +251,7 @@ func (b *StatusNode) wakuV2Service(nodeKey string, wakuCfg *params.WakuV2Config,
 		}
 		logging.SetAllLoggers(lvl)
 
-		w, err := wakuv2.New(nodeKey, cfg, logutils.ZapLogger())
+		w, err := wakuv2.New(nodeKey, cfg, logutils.ZapLogger(), b.appDB)
 
 		if err != nil {
 			return nil, err

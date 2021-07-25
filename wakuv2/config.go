@@ -30,10 +30,12 @@ type Config struct {
 	Port                   int      `toml:",omitempty"`
 	BootNodes              []string `toml:",omitempty"`
 	StoreNodes             []string `toml:",omitempty"`
+	PersistPeers           bool     `toml:",omitempty"`
 }
 
 var DefaultConfig = Config{
 	MaxMessageSize: common.DefaultMaxMessageSize,
 	Host:           "0.0.0.0",
 	Port:           60000,
+	PersistPeers:   false,
 }

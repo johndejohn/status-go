@@ -162,6 +162,9 @@ type WakuV2Config struct {
 	// Port number in which to start libp2p protocol (0 for random)
 	Port int
 
+	// PersistPeers indicates whether to store peers in the database or not
+	PersistPeers bool
+
 	// LightClient should be true if the node should start with an empty bloom filter and not forward messages from other nodes
 	LightClient bool
 
