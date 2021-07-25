@@ -30,7 +30,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p-peerstore/pstoreds"
 
@@ -39,14 +38,15 @@ import (
 	mapset "github.com/deckarep/golang-set"
 	"golang.org/x/crypto/pbkdf2"
 
-	dssql "github.com/ipfs/go-ds-sql"
-
 	gethcommon "github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/rpc"
+
+	dssql "github.com/ipfs/go-ds-sql"
 
 	wakuprotocol "github.com/status-im/go-waku/waku/v2/protocol"
 	"github.com/status-im/go-waku/waku/v2/protocol/relay"
@@ -149,7 +149,7 @@ func New(nodeKey string, cfg *Config, logger *zap.Logger, appdb *sql.DB) (*Waku,
 
 	libp2pOpts := node.DefaultLibP2POptions
 
-	if cfg.PersistPeers {
+	if cfg.PersistPeers && appdb != nil {
 		// Create persistent peerstore
 		queries, err := persistence.NewQueries("peerstore", appdb)
 		if err != nil {
