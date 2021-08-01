@@ -206,8 +206,6 @@ func NewMessenger(
 	// Initialize transport layer.
 	var transp *transport.Transport
 
-	logger.Info("failed to find Whisper service; trying Waku", zap.Error(err))
-
 	if waku, err := node.GetWaku(nil); err == nil && waku != nil {
 		transp, err = transport.NewTransport(
 			waku,
@@ -460,6 +458,8 @@ func (m *Messenger) Start() (*MessengerResponse, error) {
 	m.watchConnectionChange()
 	m.watchExpiredEmojis()
 	m.watchIdentityImageChanges()
+	m.broadcastLatestUserStatus()
+
 	if err := m.cleanTopics(); err != nil {
 		return nil, err
 	}
@@ -517,6 +517,10 @@ func (m *Messenger) handleConnectionChange(online bool) {
 }
 
 func (m *Messenger) online() bool {
+	// TODO: we are still missing peer management in wakuv2
+	if m.transport.WakuVersion() == 2 {
+		return true
+	}
 	return m.node.PeersCount() > 0
 }
 
@@ -1019,7 +1023,7 @@ func (m *Messenger) Init() error {
 	if err != nil {
 		return err
 	}
-	// uspert profile chat
+	// upsert profile chat
 	err = m.ensureMyOwnProfileChat()
 	if err != nil {
 		return err
@@ -2404,13 +2408,14 @@ func (r *ReceivedMessageState) addNewActivityCenterNotification(publicKey ecdsa.
 	isNotification, notificationType := showMentionOrReplyActivityCenterNotification(publicKey, message, chat, responseTo)
 	if isNotification {
 		notification := &ActivityCenterNotification{
-			ID:        types.FromHex(message.ID),
-			Name:      chat.Name,
-			Message:   message,
-			Type:      notificationType,
-			Timestamp: message.WhisperTimestamp,
-			ChatID:    chat.ID,
-			Author:    message.From,
+			ID:           types.FromHex(message.ID),
+			Name:         chat.Name,
+			Message:      message,
+			ReplyMessage: responseTo,
+			Type:         notificationType,
+			Timestamp:    message.WhisperTimestamp,
+			ChatID:       chat.ID,
+			Author:       message.From,
 		}
 
 		err := m.persistence.SaveActivityCenterNotification(notification)
@@ -2545,6 +2550,23 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 							continue
 						}
 
+					case protobuf.DeleteMessage:
+						logger.Debug("Handling DeleteMessage")
+						deleteProto := msg.ParsedMessage.Interface().(protobuf.DeleteMessage)
+						deleteMessage := DeleteMessage{
+							DeleteMessage: deleteProto,
+							From:          contact.ID,
+							ID:            messageID,
+							SigPubKey:     publicKey,
+						}
+
+						err = m.HandleDeleteMessage(messageState.Response, deleteMessage)
+						if err != nil {
+							logger.Warn("failed to handle DeleteMessage", zap.Error(err))
+							allMessagesProcessed = false
+							continue
+						}
+
 					case protobuf.PinMessage:
 						pinMessage := msg.ParsedMessage.Interface().(protobuf.PinMessage)
 						err = m.HandlePinMessage(messageState, pinMessage)
@@ -2564,6 +2586,16 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 						err = m.HandlePairInstallation(messageState, p)
 						if err != nil {
 							logger.Warn("failed to handle PairInstallation", zap.Error(err))
+							allMessagesProcessed = false
+							continue
+						}
+
+					case protobuf.StatusUpdate:
+						p := msg.ParsedMessage.Interface().(protobuf.StatusUpdate)
+						logger.Debug("Handling StatusUpdate", zap.Any("message", p))
+						err = m.HandleStatusUpdate(messageState, p)
+						if err != nil {
+							logger.Warn("failed to handle StatusMessage", zap.Error(err))
 							allMessagesProcessed = false
 							continue
 						}
@@ -2855,7 +2887,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 			// Process any community changes
 			for _, changes := range messageState.Response.CommunityChanges {
 				if changes.ShouldMemberJoin {
-					response, err := m.joinCommunity(changes.Community.ID())
+					response, err := m.joinCommunity(context.TODO(), changes.Community.ID())
 					if err != nil {
 						logger.Error("cannot join community", zap.Error(err))
 						continue
@@ -3034,12 +3066,13 @@ func (m *Messenger) RequestHistoricMessages(
 	ctx context.Context,
 	from, to uint32,
 	cursor []byte,
+	storeCursor *types.StoreRequestCursor,
 	waitForResponse bool,
-) ([]byte, error) {
+) ([]byte, *types.StoreRequestCursor, error) {
 	if m.mailserver == nil {
-		return nil, errors.New("no mailserver selected")
+		return nil, nil, errors.New("no mailserver selected")
 	}
-	return m.transport.SendMessagesRequest(ctx, m.mailserver, from, to, cursor, waitForResponse)
+	return m.transport.SendMessagesRequest(ctx, m.mailserver, from, to, cursor, storeCursor, waitForResponse)
 }
 
 func (m *Messenger) MessageByID(id string) (*common.Message, error) {
@@ -3215,6 +3248,7 @@ func (m *Messenger) RequestTransaction(ctx context.Context, chatID, value, contr
 		Address:  address,
 		Value:    value,
 		Contract: contract,
+		ChatId:   chatID,
 	}
 	encodedMessage, err := proto.Marshal(request)
 	if err != nil {
@@ -3287,6 +3321,7 @@ func (m *Messenger) RequestAddressForTransaction(ctx context.Context, chatID, fr
 		Clock:    message.Clock,
 		Value:    value,
 		Contract: contract,
+		ChatId:   chatID,
 	}
 	encodedMessage, err := proto.Marshal(request)
 	if err != nil {
@@ -3384,6 +3419,7 @@ func (m *Messenger) AcceptRequestAddressForTransaction(ctx context.Context, mess
 		Clock:   message.Clock,
 		Id:      messageID,
 		Address: address,
+		ChatId:  chatID,
 	}
 	encodedMessage, err := proto.Marshal(request)
 	if err != nil {
@@ -3461,8 +3497,9 @@ func (m *Messenger) DeclineRequestTransaction(ctx context.Context, messageID str
 	}
 
 	request := &protobuf.DeclineRequestTransaction{
-		Clock: message.Clock,
-		Id:    messageID,
+		Clock:  message.Clock,
+		Id:     messageID,
+		ChatId: chatID,
 	}
 	encodedMessage, err := proto.Marshal(request)
 	if err != nil {
@@ -3539,8 +3576,9 @@ func (m *Messenger) DeclineRequestAddressForTransaction(ctx context.Context, mes
 	}
 
 	request := &protobuf.DeclineRequestAddressForTransaction{
-		Clock: message.Clock,
-		Id:    messageID,
+		Clock:  message.Clock,
+		Id:     messageID,
+		ChatId: chatID,
 	}
 	encodedMessage, err := proto.Marshal(request)
 	if err != nil {
@@ -3634,6 +3672,7 @@ func (m *Messenger) AcceptRequestTransaction(ctx context.Context, transactionHas
 		Id:              messageID,
 		TransactionHash: transactionHash,
 		Signature:       signature,
+		ChatId:          chatID,
 	}
 	encodedMessage, err := proto.Marshal(request)
 	if err != nil {
@@ -3707,6 +3746,7 @@ func (m *Messenger) SendTransaction(ctx context.Context, chatID, value, contract
 		Clock:           message.Clock,
 		TransactionHash: transactionHash,
 		Signature:       signature,
+		ChatId:          chatID,
 	}
 	encodedMessage, err := proto.Marshal(request)
 	if err != nil {

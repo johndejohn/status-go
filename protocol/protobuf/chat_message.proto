@@ -1,5 +1,6 @@
 syntax = "proto3";
 
+option go_package = "github.com/protocol/protobuf";
 package protobuf;
 
 import "enums.proto";
@@ -38,6 +39,19 @@ message EditMessage {
 
   // The type of message (public/one-to-one/private-group-chat)
   MessageType message_type = 6;
+}
+
+message DeleteMessage {
+  uint64 clock = 1;
+
+  string chat_id = 2;
+  string message_id = 3;
+
+  // Grant for community delete messages
+  bytes grant = 4;
+
+  // The type of message (public/one-to-one/private-group-chat)
+  MessageType message_type = 5;
 }
 
 

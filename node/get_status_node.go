@@ -1,48 +1,52 @@
 package node
 
 import (
-	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"sync"
-	"time"
 
 	ma "github.com/multiformats/go-multiaddr"
 	"github.com/syndtr/goleveldb/leveldb"
 
 	"github.com/ethereum/go-ethereum/accounts"
-	"github.com/ethereum/go-ethereum/les"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/enr"
 
+	"github.com/status-im/status-go/account"
+	"github.com/status-im/status-go/common"
 	"github.com/status-im/status-go/connection"
 	"github.com/status-im/status-go/db"
 	"github.com/status-im/status-go/discovery"
+	"github.com/status-im/status-go/multiaccounts"
 	"github.com/status-im/status-go/params"
 	"github.com/status-im/status-go/peers"
 	"github.com/status-im/status-go/rpc"
+	accountssvc "github.com/status-im/status-go/services/accounts"
+	appmetricsservice "github.com/status-im/status-go/services/appmetrics"
 	"github.com/status-im/status-go/services/browsers"
 	localnotifications "github.com/status-im/status-go/services/local-notifications"
+	"github.com/status-im/status-go/services/mailservers"
 	"github.com/status-im/status-go/services/peer"
 	"github.com/status-im/status-go/services/permissions"
-	"github.com/status-im/status-go/services/status"
+	"github.com/status-im/status-go/services/personal"
+	"github.com/status-im/status-go/services/rpcfilters"
+	"github.com/status-im/status-go/services/rpcstats"
+	"github.com/status-im/status-go/services/subscriptions"
 	"github.com/status-im/status-go/services/wakuext"
 	"github.com/status-im/status-go/services/wakuv2ext"
 	"github.com/status-im/status-go/services/wallet"
+	"github.com/status-im/status-go/timesource"
 	"github.com/status-im/status-go/waku"
 	"github.com/status-im/status-go/wakuv2"
 )
-
-// tickerResolution is the delta to check blockchain sync progress.
-const tickerResolution = time.Second
 
 // errors
 var (
@@ -52,6 +56,7 @@ var (
 	ErrAccountKeyStoreMissing = errors.New("account key store is not set")
 	ErrServiceUnknown         = errors.New("service unknown")
 	ErrDiscoveryRunning       = errors.New("discovery is already running")
+	ErrRPCMethodUnavailable   = `{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"the method called does not exist/is not available"}}`
 )
 
 // StatusNode abstracts contained geth node and provides helper methods to
@@ -59,10 +64,12 @@ var (
 type StatusNode struct {
 	mu sync.RWMutex
 
-	config           *params.NodeConfig // Status node configuration
-	gethNode         *node.Node         // reference to Geth P2P stack/node
-	rpcClient        *rpc.Client        // reference to public RPC client
-	rpcPrivateClient *rpc.Client        // reference to private RPC client (can call private APIs)
+	appDB           *sql.DB
+	multiaccountsDB *multiaccounts.Database
+
+	config    *params.NodeConfig // Status node configuration
+	gethNode  *node.Node         // reference to Geth P2P stack/node
+	rpcClient *rpc.Client        // reference to an RPC client
 
 	discovery discovery.Discovery
 	register  *peers.Register
@@ -70,12 +77,40 @@ type StatusNode struct {
 	db        *leveldb.DB // used as a cache for PeerPool
 
 	log log.Logger
+
+	gethAccountManager *account.GethManager
+	accountsManager    *accounts.Manager
+
+	// services
+	services      []common.StatusService
+	publicMethods map[string]bool
+	// we explicitly list every service, we could use interfaces
+	// and store them in a nicer way and user reflection, but for now stupid is good
+	rpcFiltersSrvc         *rpcfilters.Service
+	subscriptionsSrvc      *subscriptions.Service
+	rpcStatsSrvc           *rpcstats.Service
+	accountsSrvc           *accountssvc.Service
+	browsersSrvc           *browsers.Service
+	permissionsSrvc        *permissions.Service
+	mailserversSrvc        *mailservers.Service
+	appMetricsSrvc         *appmetricsservice.Service
+	walletSrvc             *wallet.Service
+	peerSrvc               *peer.Service
+	localNotificationsSrvc *localnotifications.Service
+	personalSrvc           *personal.Service
+	timeSourceSrvc         *timesource.NTPTimeSource
+	wakuSrvc               *waku.Waku
+	wakuExtSrvc            *wakuext.Service
+	wakuV2Srvc             *wakuv2.Waku
+	wakuV2ExtSrvc          *wakuv2ext.Service
 }
 
 // New makes new instance of StatusNode.
 func New() *StatusNode {
 	return &StatusNode{
-		log: log.New("package", "status-go/node.StatusNode"),
+		gethAccountManager: account.NewGethManager(),
+		log:                log.New("package", "status-go/node.StatusNode"),
+		publicMethods:      make(map[string]bool),
 	}
 }
 
@@ -109,9 +144,8 @@ func (n *StatusNode) Server() *p2p.Server {
 
 // Start starts current StatusNode, failing if it's already started.
 // It accepts a list of services that should be added to the node.
-func (n *StatusNode) Start(config *params.NodeConfig, accs *accounts.Manager, services ...node.ServiceConstructor) error {
+func (n *StatusNode) Start(config *params.NodeConfig, accs *accounts.Manager) error {
 	return n.StartWithOptions(config, StartOptions{
-		Services:        services,
 		StartDiscovery:  true,
 		AccountsManager: accs,
 	})
@@ -119,7 +153,6 @@ func (n *StatusNode) Start(config *params.NodeConfig, accs *accounts.Manager, se
 
 // StartOptions allows to control some parameters of Start() method.
 type StartOptions struct {
-	Services        []node.ServiceConstructor
 	StartDiscovery  bool
 	AccountsManager *accounts.Manager
 }
@@ -135,6 +168,8 @@ func (n *StatusNode) StartWithOptions(config *params.NodeConfig, options StartOp
 		return ErrNodeRunning
 	}
 
+	n.accountsManager = options.AccountsManager
+
 	n.log.Debug("starting with options", "ClusterConfig", config.ClusterConfig)
 
 	db, err := db.Create(config.DataDir, params.StatusDatabase)
@@ -144,7 +179,7 @@ func (n *StatusNode) StartWithOptions(config *params.NodeConfig, options StartOp
 
 	n.db = db
 
-	err = n.startWithDB(config, options.AccountsManager, db, options.Services)
+	err = n.startWithDB(config, options.AccountsManager, db)
 
 	// continue only if there was no error when starting node with a db
 	if err == nil && options.StartDiscovery && n.discoveryEnabled() {
@@ -162,21 +197,20 @@ func (n *StatusNode) StartWithOptions(config *params.NodeConfig, options StartOp
 	return nil
 }
 
-func (n *StatusNode) startWithDB(config *params.NodeConfig, accs *accounts.Manager, db *leveldb.DB, services []node.ServiceConstructor) error {
+func (n *StatusNode) startWithDB(config *params.NodeConfig, accs *accounts.Manager, db *leveldb.DB) error {
 	if err := n.createNode(config, accs, db); err != nil {
 		return err
 	}
 	n.config = config
 
-	if err := n.startGethNode(services); err != nil {
-		return err
-	}
-
 	if err := n.setupRPCClient(); err != nil {
 		return err
 	}
 
-	return nil
+	if err := n.initServices(config); err != nil {
+		return err
+	}
+	return n.startGethNode()
 }
 
 func (n *StatusNode) createNode(config *params.NodeConfig, accs *accounts.Manager, db *leveldb.DB) (err error) {
@@ -185,19 +219,13 @@ func (n *StatusNode) createNode(config *params.NodeConfig, accs *accounts.Manage
 }
 
 // startGethNode starts current StatusNode, will fail if it's already started.
-func (n *StatusNode) startGethNode(services []node.ServiceConstructor) error {
-	for _, service := range services {
-		if err := n.gethNode.Register(service); err != nil {
-			return err
-		}
-	}
-
+func (n *StatusNode) startGethNode() error {
 	return n.gethNode.Start()
 }
 
 func (n *StatusNode) setupRPCClient() (err error) {
-	// setup public RPC client
-	gethNodeClient, err := n.gethNode.AttachPublic()
+	// setup RPC client
+	gethNodeClient, err := n.gethNode.Attach()
 	if err != nil {
 		return
 	}
@@ -205,13 +233,6 @@ func (n *StatusNode) setupRPCClient() (err error) {
 	if err != nil {
 		return
 	}
-
-	// setup private RPC client
-	gethNodePrivateClient, err := n.gethNode.Attach()
-	if err != nil {
-		return
-	}
-	n.rpcPrivateClient, err = rpc.NewClient(gethNodePrivateClient, n.config.UpstreamConfig)
 
 	return
 }
@@ -315,8 +336,6 @@ func (n *StatusNode) startDiscovery() error {
 	options.AllowStop = len(n.config.RegisterTopics) == 0
 	options.TrustedMailServers = parseNodesToNodeID(n.config.ClusterConfig.TrustedMailServers)
 
-	options.MailServerRegistryAddress = n.config.MailServerRegistryAddress
-
 	n.peerPool = peers.NewPeerPool(
 		n.discovery,
 		n.config.RequireTopics,
@@ -355,12 +374,11 @@ func (n *StatusNode) stop() error {
 		n.discovery = nil
 	}
 
-	if err := n.gethNode.Stop(); err != nil {
+	if err := n.gethNode.Close(); err != nil {
 		return err
 	}
 
 	n.rpcClient = nil
-	n.rpcPrivateClient = nil
 	// We need to clear `gethNode` because config is passed to `Start()`
 	// and may be completely different. Similarly with `config`.
 	n.gethNode = nil
@@ -373,6 +391,25 @@ func (n *StatusNode) stop() error {
 
 		return err
 	}
+
+	n.rpcFiltersSrvc = nil
+	n.subscriptionsSrvc = nil
+	n.rpcStatsSrvc = nil
+	n.accountsSrvc = nil
+	n.browsersSrvc = nil
+	n.permissionsSrvc = nil
+	n.mailserversSrvc = nil
+	n.appMetricsSrvc = nil
+	n.walletSrvc = nil
+	n.peerSrvc = nil
+	n.localNotificationsSrvc = nil
+	n.personalSrvc = nil
+	n.timeSourceSrvc = nil
+	n.wakuSrvc = nil
+	n.wakuExtSrvc = nil
+	n.wakuV2Srvc = nil
+	n.wakuV2ExtSrvc = nil
+	n.publicMethods = make(map[string]bool)
 
 	return nil
 }
@@ -520,163 +557,12 @@ func (n *StatusNode) PeerCount() int {
 	return n.gethNode.Server().PeerCount()
 }
 
-// gethService is a wrapper for gethNode.Service which retrieves a currently
-// running service registered of a specific type.
-func (n *StatusNode) gethService(serviceInstance interface{}) error {
-	if !n.isRunning() {
-		return ErrNoRunningNode
+func (n *StatusNode) ConnectionChanged(state connection.State) {
+	if n.wakuExtSrvc == nil {
+		return
 	}
 
-	if err := n.gethNode.Service(serviceInstance); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// LightEthereumService exposes reference to LES service running on top of the node
-func (n *StatusNode) LightEthereumService() (l *les.LightEthereum, err error) {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-
-	err = n.gethService(&l)
-	if err == node.ErrServiceUnknown {
-		err = ErrServiceUnknown
-	}
-
-	return
-}
-
-// StatusService exposes reference to status service running on top of the node
-func (n *StatusNode) StatusService() (st *status.Service, err error) {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-
-	err = n.gethService(&st)
-	if err == node.ErrServiceUnknown {
-		err = ErrServiceUnknown
-	}
-
-	return
-}
-
-// PeerService exposes reference to peer service running on top of the node.
-func (n *StatusNode) PeerService() (st *peer.Service, err error) {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-
-	err = n.gethService(&st)
-	if err == node.ErrServiceUnknown {
-		err = ErrServiceUnknown
-	}
-
-	return
-}
-
-// WakuService exposes reference to Waku service running on top of the node
-func (n *StatusNode) WakuService() (w *waku.Waku, err error) {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-
-	err = n.gethService(&w)
-	if err == node.ErrServiceUnknown {
-		err = ErrServiceUnknown
-	}
-
-	return
-}
-
-// WakuV2Service exposes reference to Whisper service running on top of the node
-func (n *StatusNode) WakuV2Service() (w *wakuv2.Waku, err error) {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-
-	err = n.gethService(&w)
-	if err == node.ErrServiceUnknown {
-		err = ErrServiceUnknown
-	}
-
-	return
-}
-
-// WakuExtService exposes reference to shh extension service running on top of the node
-func (n *StatusNode) WakuExtService() (s *wakuext.Service, err error) {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-
-	err = n.gethService(&s)
-	if err == node.ErrServiceUnknown {
-		err = ErrServiceUnknown
-	}
-
-	return
-}
-
-func (n *StatusNode) ConnectionChanged(state connection.State) error {
-	service, err := n.WakuExtService()
-	if err != nil {
-		return err
-	}
-
-	service.ConnectionChanged(state)
-	return nil
-}
-
-// WakuV2ExtService exposes reference to waku v2 extension service running on top of the node
-func (n *StatusNode) WakuV2ExtService() (s *wakuv2ext.Service, err error) {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-
-	err = n.gethService(&s)
-	if err == node.ErrServiceUnknown {
-		err = ErrServiceUnknown
-	}
-
-	return
-}
-
-// WalletService returns wallet.Service instance if it was started.
-func (n *StatusNode) WalletService() (s *wallet.Service, err error) {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-	err = n.gethService(&s)
-	if err == node.ErrServiceUnknown {
-		err = ErrServiceUnknown
-	}
-	return
-}
-
-// LocalNotificationsService returns localnotifications.Service instance if it was started.
-func (n *StatusNode) LocalNotificationsService() (s *localnotifications.Service, err error) {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-	err = n.gethService(&s)
-	if err == node.ErrServiceUnknown {
-		err = ErrServiceUnknown
-	}
-	return
-}
-
-// BrowsersService returns browsers.Service instance if it was started.
-func (n *StatusNode) BrowsersService() (s *browsers.Service, err error) {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-	err = n.gethService(&s)
-	if err == node.ErrServiceUnknown {
-		err = ErrServiceUnknown
-	}
-	return
-}
-
-// PermissionsService returns browsers.Service instance if it was started.
-func (n *StatusNode) PermissionsService() (s *permissions.Service, err error) {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-	err = n.gethService(&s)
-	if err == node.ErrServiceUnknown {
-		err = ErrServiceUnknown
-	}
-	return
+	n.wakuExtSrvc.ConnectionChanged(state)
 }
 
 // AccountManager exposes reference to node's accounts manager
@@ -698,104 +584,6 @@ func (n *StatusNode) RPCClient() *rpc.Client {
 	return n.rpcClient
 }
 
-// RPCPrivateClient exposes reference to RPC client connected to the running node
-// that can call both public and private APIs.
-func (n *StatusNode) RPCPrivateClient() *rpc.Client {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	return n.rpcPrivateClient
-}
-
-// ChaosModeCheckRPCClientsUpstreamURL updates RPCClient and RPCPrivateClient upstream URLs,
-// if defined, without restarting the node. This is required for the Chaos Unicorn Day.
-// Additionally, if the passed URL is Infura, it changes it to httpstat.us/500.
-func (n *StatusNode) ChaosModeCheckRPCClientsUpstreamURL(on bool) error {
-	url := n.config.UpstreamConfig.URL
-
-	if on {
-		if strings.Contains(url, "infura.io") {
-			url = "https://httpbin.org/status/500"
-		}
-	}
-
-	publicClient := n.RPCClient()
-	if publicClient != nil {
-		if err := publicClient.UpdateUpstreamURL(url); err != nil {
-			return err
-		}
-	}
-
-	privateClient := n.RPCPrivateClient()
-	if privateClient != nil {
-		if err := privateClient.UpdateUpstreamURL(url); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// EnsureSync waits until blockchain synchronization
-// is complete and returns.
-func (n *StatusNode) EnsureSync(ctx context.Context) error {
-	// Don't wait for any blockchain sync for the
-	// local private chain as blocks are never mined.
-	if n.config.NetworkID == 0 || n.config.NetworkID == params.StatusChainNetworkID {
-		return nil
-	}
-
-	return n.ensureSync(ctx)
-}
-
-func (n *StatusNode) ensureSync(ctx context.Context) error {
-	les, err := n.LightEthereumService()
-	if err != nil {
-		return fmt.Errorf("failed to get LES service: %v", err)
-	}
-
-	downloader := les.Downloader()
-	if downloader == nil {
-		return errors.New("LightEthereumService downloader is nil")
-	}
-
-	progress := downloader.Progress()
-	if n.PeerCount() > 0 && progress.CurrentBlock >= progress.HighestBlock {
-		n.log.Debug("Synchronization completed", "current block", progress.CurrentBlock, "highest block", progress.HighestBlock)
-		return nil
-	}
-
-	ticker := time.NewTicker(tickerResolution)
-	defer ticker.Stop()
-
-	progressTicker := time.NewTicker(time.Minute)
-	defer progressTicker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return errors.New("timeout during node synchronization")
-		case <-ticker.C:
-			if n.PeerCount() == 0 {
-				n.log.Debug("No established connections with any peers, continue waiting for a sync")
-				continue
-			}
-			if downloader.Synchronising() {
-				n.log.Debug("Synchronization is in progress")
-				continue
-			}
-			progress = downloader.Progress()
-			if progress.CurrentBlock >= progress.HighestBlock {
-				n.log.Info("Synchronization completed", "current block", progress.CurrentBlock, "highest block", progress.HighestBlock)
-				return nil
-			}
-			n.log.Debug("Synchronization is not finished", "current", progress.CurrentBlock, "highest", progress.HighestBlock)
-		case <-progressTicker.C:
-			progress = downloader.Progress()
-			n.log.Warn("Synchronization is not finished", "current", progress.CurrentBlock, "highest", progress.HighestBlock)
-		}
-	}
-}
-
 // Discover sets up the discovery for a specific topic.
 func (n *StatusNode) Discover(topic string, max, min int) (err error) {
 	if n.peerPool == nil {
@@ -805,4 +593,12 @@ func (n *StatusNode) Discover(topic string, max, min int) (err error) {
 		Max: max,
 		Min: min,
 	})
+}
+
+func (n *StatusNode) SetAppDB(db *sql.DB) {
+	n.appDB = db
+}
+
+func (n *StatusNode) SetMultiaccountsDB(db *multiaccounts.Database) {
+	n.multiaccountsDB = db
 }

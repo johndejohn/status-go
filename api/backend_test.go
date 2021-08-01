@@ -12,14 +12,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/status-im/status-go/account/generator"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	gethcrypto "github.com/ethereum/go-ethereum/crypto"
 
-	"github.com/status-im/status-go/account"
 	"github.com/status-im/status-go/connection"
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
@@ -165,68 +162,6 @@ func TestBackendGettersConcurrently(t *testing.T) {
 		assert.True(t, backend.IsNodeRunning())
 		wg.Done()
 	}()
-
-	wg.Wait()
-}
-
-func TestBackendAccountsConcurrently(t *testing.T) {
-	utils.Init()
-
-	backend := NewGethStatusBackend()
-	config, err := utils.MakeTestNodeConfig(params.StatusChainNetworkID)
-	require.NoError(t, err)
-	require.NoError(t, backend.AccountManager().InitKeystore(config.KeyStoreDir))
-	err = backend.StartNode(config)
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, backend.StopNode())
-	}()
-
-	var wgCreateAccounts sync.WaitGroup
-	count := 3
-	type AccountData struct {
-		MasterAccount generator.GeneratedAccountInfo
-		AccountInfo   account.Info
-		Password      string
-	}
-	addressCh := make(chan AccountData, count) // use buffered channel to avoid blocking
-
-	// create new accounts concurrently
-	for i := 0; i < count; i++ {
-		wgCreateAccounts.Add(1)
-		go func(pass string) {
-			MKInfo, accountInfo, _, err := backend.AccountManager().CreateAccount(pass)
-			assert.NoError(t, err)
-			addressCh <- AccountData{MKInfo, accountInfo, pass}
-			wgCreateAccounts.Done()
-		}("password-00" + fmt.Sprint(i))
-	}
-
-	// close addressCh as otherwise for loop never finishes
-	go func() { wgCreateAccounts.Wait(); close(addressCh) }()
-
-	// select, reselect or logout concurrently
-	var wg sync.WaitGroup
-
-	for accountData := range addressCh {
-		wg.Add(1)
-		go func(accountData AccountData) {
-			loginParams := account.LoginParams{
-				MainAccount:  types.HexToAddress(accountData.AccountInfo.WalletAddress),
-				ChatAddress:  types.HexToAddress(accountData.AccountInfo.ChatAddress),
-				Password:     accountData.Password,
-				MultiAccount: accountData.MasterAccount.ToMultiAccount(),
-			}
-			assert.NoError(t, backend.SelectAccount(loginParams))
-			wg.Done()
-		}(accountData)
-
-		wg.Add(1)
-		go func() {
-			assert.NoError(t, backend.Logout())
-			wg.Done()
-		}()
-	}
 
 	wg.Wait()
 }
@@ -529,6 +464,10 @@ func TestLoginWithKey(t *testing.T) {
 	require.NoError(t, b.Logout())
 	require.NoError(t, b.StopNode())
 
+	require.NoError(t, b.AccountManager().InitKeystore(conf.KeyStoreDir))
+	b.UpdateRootDataDir(conf.DataDir)
+	require.NoError(t, b.OpenAccounts())
+
 	require.NoError(t, b.StartNodeWithKey(main, "test-pass", keyhex))
 	defer func() {
 		assert.NoError(t, b.Logout())
@@ -537,6 +476,39 @@ func TestLoginWithKey(t *testing.T) {
 	extkey, err := b.accountManager.SelectedChatAccount()
 	require.NoError(t, err)
 	require.Equal(t, crypto.PubkeyToAddress(chatKey.PublicKey), extkey.Address)
+}
+
+func TestVerifyDatabasePassword(t *testing.T) {
+	utils.Init()
+
+	b := NewGethStatusBackend()
+	chatKey, err := gethcrypto.GenerateKey()
+	require.NoError(t, err)
+	walletKey, err := gethcrypto.GenerateKey()
+	require.NoError(t, err)
+	keyUIDHex := sha256.Sum256(gethcrypto.FromECDSAPub(&chatKey.PublicKey))
+	keyUID := types.EncodeHex(keyUIDHex[:])
+	main := multiaccounts.Account{
+		KeyUID: keyUID,
+	}
+	tmpdir, err := ioutil.TempDir("", "verify-database-password-")
+	require.NoError(t, err)
+	defer os.Remove(tmpdir)
+	conf, err := params.NewNodeConfig(tmpdir, 1777)
+	require.NoError(t, err)
+	keyhex := hex.EncodeToString(gethcrypto.FromECDSA(chatKey))
+
+	require.NoError(t, b.AccountManager().InitKeystore(conf.KeyStoreDir))
+	b.UpdateRootDataDir(conf.DataDir)
+	require.NoError(t, b.OpenAccounts())
+
+	address := crypto.PubkeyToAddress(walletKey.PublicKey)
+	require.NoError(t, b.SaveAccountAndStartNodeWithKey(main, "test-pass", settings, conf, []accounts.Account{{Address: address, Wallet: true}}, keyhex))
+	require.NoError(t, b.Logout())
+	require.NoError(t, b.StopNode())
+
+	require.Error(t, b.VerifyDatabasePassword(main.KeyUID, "wrong-pass"))
+	require.NoError(t, b.VerifyDatabasePassword(main.KeyUID, "test-pass"))
 }
 
 func TestDeleteMulticcount(t *testing.T) {
@@ -613,4 +585,93 @@ func TestDeleteMulticcount(t *testing.T) {
 	files, err = ioutil.ReadDir(rootDataDir)
 	require.NoError(t, err)
 	require.Equal(t, 3, len(files))
+}
+
+func TestConvertAccount(t *testing.T) {
+	backend := NewGethStatusBackend()
+	password := "123123"
+	rootDataDir, err := ioutil.TempDir("", "test-keystore-dir")
+	require.NoError(t, err)
+	defer os.Remove(rootDataDir)
+
+	keyStoreDir := filepath.Join(rootDataDir, "keystore")
+
+	backend.rootDataDir = rootDataDir
+
+	err = backend.AccountManager().InitKeystore(keyStoreDir)
+	require.NoError(t, err)
+
+	backend.AccountManager()
+	accs, err := backend.AccountManager().
+		AccountsGenerator().
+		GenerateAndDeriveAddresses(12, 1, "", []string{"m/44'/60'/0'/0"})
+	require.NoError(t, err)
+
+	generateAccount := accs[0]
+	accountInfo, err := backend.AccountManager().
+		AccountsGenerator().
+		StoreAccount(generateAccount.ID, password)
+	require.NoError(t, err)
+
+	account := multiaccounts.Account{
+		Name:      "foo",
+		Timestamp: 1,
+		KeyUID:    generateAccount.KeyUID,
+	}
+
+	err = backend.ensureAppDBOpened(account, password)
+	require.NoError(t, err)
+
+	settings := accounts.Settings{
+		Address:           types.HexToAddress(accountInfo.Address),
+		CurrentNetwork:    "mainnet_rpc",
+		DappsAddress:      types.HexToAddress(accountInfo.Address),
+		EIP1581Address:    types.HexToAddress(accountInfo.Address),
+		InstallationID:    "d3efcff6-cffa-560e-a547-21d3858cbc51",
+		KeyUID:            account.KeyUID,
+		LatestDerivedPath: 0,
+		Name:              "Jittery Cornflowerblue Kingbird",
+		Networks:          &networks,
+		PhotoPath:         "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAIAAACRXR/mAAAAjklEQVR4nOzXwQmFMBAAUZXUYh32ZB32ZB02sxYQQSZGsod55/91WFgSS0RM+SyjA56ZRZhFmEWYRRT6h+M6G16zrxv6fdJpmUWYRbxsYr13dKfanpN0WmYRZhGzXz6AWYRZRIfbaX26fT9Jk07LLMIsosPt9I/dTDotswizCG+nhFmEWYRZhFnEHQAA///z1CFkYamgfQAAAABJRU5ErkJggg==",
+		PreviewPrivacy:    false,
+		PublicKey:         accountInfo.PublicKey,
+		SigningPhrase:     "yurt joey vibe",
+		WalletRootAddress: types.HexToAddress(accountInfo.Address)}
+
+	err = backend.saveAccountsAndSettings(
+		settings,
+		&params.NodeConfig{},
+		nil)
+	require.NoError(t, err)
+
+	err = backend.OpenAccounts()
+	require.NoError(t, err)
+
+	err = backend.SaveAccount(account)
+	require.NoError(t, err)
+
+	files, err := ioutil.ReadDir(rootDataDir)
+	require.NoError(t, err)
+	require.NotEqual(t, 3, len(files))
+
+	keycardPassword := "0xcafecafe"
+
+	keycardAccount := account
+	keycardAccount.KeycardPairing = "pairing"
+
+	keycardSettings := accounts.Settings{
+		KeycardInstanceUID: "0xdeadbeef",
+		KeycardPAiredOn:    1,
+		KeycardPairing:     "pairing",
+	}
+
+	err = backend.ConvertToKeycardAccount(keyStoreDir, keycardAccount, keycardSettings, password, keycardPassword)
+	require.NoError(t, err)
+
+	_, err = os.Stat(keyStoreDir)
+	require.Error(t, err)
+	require.True(t, os.IsNotExist(err))
+
+	err = backend.ensureAppDBOpened(keycardAccount, keycardPassword)
+	require.NoError(t, err)
 }

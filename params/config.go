@@ -1054,7 +1054,7 @@ func LesTopic(netid int) string {
 	case 1:
 		return LESDiscoveryIdentifier + types.Bytes2Hex(params.MainnetGenesisHash.Bytes()[:8])
 	case 3:
-		return LESDiscoveryIdentifier + types.Bytes2Hex(params.TestnetGenesisHash.Bytes()[:8])
+		return LESDiscoveryIdentifier + types.Bytes2Hex(params.RopstenGenesisHash.Bytes()[:8])
 	case 4:
 		return LESDiscoveryIdentifier + types.Bytes2Hex(params.RinkebyGenesisHash.Bytes()[:8])
 	default:

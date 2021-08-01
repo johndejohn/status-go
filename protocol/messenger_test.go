@@ -104,7 +104,7 @@ func (s *MessengerSuite) SetupTest() {
 	config.MinimumAcceptedPoW = 0
 	shh := waku.New(&config, s.logger)
 	s.shh = gethbridge.NewGethWakuWrapper(shh)
-	s.Require().NoError(shh.Start(nil))
+	s.Require().NoError(shh.Start())
 
 	s.m = s.newMessenger(s.shh)
 	s.privateKey = s.m.identity
@@ -339,6 +339,27 @@ func buildTestMessage(chat Chat) *common.Message {
 	message.WhisperTimestamp = clock
 	message.LocalChatID = chat.ID
 	message.ContentType = protobuf.ChatMessage_TEXT_PLAIN
+	switch chat.ChatType {
+	case ChatTypePublic, ChatTypeProfile:
+		message.MessageType = protobuf.MessageType_PUBLIC_GROUP
+	case ChatTypeOneToOne:
+		message.MessageType = protobuf.MessageType_ONE_TO_ONE
+	case ChatTypePrivateGroupChat:
+		message.MessageType = protobuf.MessageType_PRIVATE_GROUP
+	}
+
+	return message
+}
+
+func buildTestGapMessage(chat Chat) *common.Message {
+	clock, timestamp := chat.NextClockAndTimestamp(&testTimeSource{})
+	message := &common.Message{}
+	message.ChatId = chat.ID
+	message.Clock = clock
+	message.Timestamp = timestamp
+	message.WhisperTimestamp = clock
+	message.LocalChatID = chat.ID
+	message.ContentType = protobuf.ChatMessage_SYSTEM_MESSAGE_GAP
 	switch chat.ChatType {
 	case ChatTypePublic, ChatTypeProfile:
 		message.MessageType = protobuf.MessageType_PUBLIC_GROUP
@@ -1612,6 +1633,7 @@ func (s *MessengerSuite) TestDeclineRequestAddressForTransaction() {
 	_, err := theirMessenger.Start()
 	s.Require().NoError(err)
 	theirPkString := types.EncodeHex(crypto.FromECDSAPub(&theirMessenger.identity.PublicKey))
+	myPkString := types.EncodeHex(crypto.FromECDSAPub(&s.m.identity.PublicKey))
 
 	chat := CreateOneToOneChat(theirPkString, &theirMessenger.identity.PublicKey, s.m.transport)
 	err = s.m.SaveChat(chat)
@@ -1655,6 +1677,7 @@ func (s *MessengerSuite) TestDeclineRequestAddressForTransaction() {
 	s.Require().Equal(value, receiverMessage.CommandParameters.Value)
 	s.Require().Equal(contract, receiverMessage.CommandParameters.Contract)
 	s.Require().Equal(initialCommandID, receiverMessage.CommandParameters.ID)
+	s.Require().Equal(theirPkString, receiverMessage.ChatId)
 	s.Require().Equal(common.CommandStateRequestAddressForTransaction, receiverMessage.CommandParameters.CommandState)
 
 	// We decline the request
@@ -1692,6 +1715,7 @@ func (s *MessengerSuite) TestDeclineRequestAddressForTransaction() {
 	s.Require().Equal(contract, receiverMessage.CommandParameters.Contract)
 	s.Require().Equal(common.CommandStateRequestAddressForTransactionDeclined, receiverMessage.CommandParameters.CommandState)
 	s.Require().Equal(initialCommandID, receiverMessage.CommandParameters.ID)
+	s.Require().Equal(myPkString, receiverMessage.ChatId)
 	s.Require().Equal(initialCommandID, receiverMessage.Replace)
 	s.Require().NoError(theirMessenger.Shutdown())
 }
@@ -1911,6 +1935,7 @@ func (s *MessengerSuite) TestAcceptRequestAddressForTransaction() {
 	_, err := theirMessenger.Start()
 	s.Require().NoError(err)
 	theirPkString := types.EncodeHex(crypto.FromECDSAPub(&theirMessenger.identity.PublicKey))
+	myPkString := types.EncodeHex(crypto.FromECDSAPub(&s.m.identity.PublicKey))
 
 	myAddress := crypto.PubkeyToAddress(s.m.identity.PublicKey)
 
@@ -1955,6 +1980,7 @@ func (s *MessengerSuite) TestAcceptRequestAddressForTransaction() {
 	s.Require().Equal(contract, receiverMessage.CommandParameters.Contract)
 	s.Require().Equal(initialCommandID, receiverMessage.CommandParameters.ID)
 	s.Require().Equal(common.CommandStateRequestAddressForTransaction, receiverMessage.CommandParameters.CommandState)
+	s.Require().Equal(theirPkString, receiverMessage.ChatId)
 
 	// We accept the request
 	response, err = theirMessenger.AcceptRequestAddressForTransaction(context.Background(), receiverMessage.ID, "some-address")
@@ -1994,6 +2020,7 @@ func (s *MessengerSuite) TestAcceptRequestAddressForTransaction() {
 	s.Require().Equal(initialCommandID, receiverMessage.CommandParameters.ID)
 	s.Require().Equal("some-address", receiverMessage.CommandParameters.Address)
 	s.Require().Equal(initialCommandID, receiverMessage.Replace)
+	s.Require().Equal(myPkString, receiverMessage.ChatId)
 	s.Require().NoError(theirMessenger.Shutdown())
 }
 

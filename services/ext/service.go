@@ -64,7 +64,7 @@ type Service struct {
 }
 
 // Make sure that Service implements node.Service interface.
-var _ node.Service = (*Service)(nil)
+var _ node.Lifecycle = (*Service)(nil)
 
 func New(
 	config params.ShhextConfig,
@@ -198,7 +198,7 @@ type verifyTransactionClient struct {
 }
 
 func (c *verifyTransactionClient) TransactionByHash(ctx context.Context, hash types.Hash) (coretypes.Message, coretypes.TransactionStatus, error) {
-	signer := gethtypes.NewEIP155Signer(c.chainID)
+	signer := gethtypes.NewLondonSigner(c.chainID)
 	client, err := ethclient.Dial(c.url)
 	if err != nil {
 		return coretypes.Message{}, coretypes.TransactionStatusPending, err
@@ -209,7 +209,7 @@ func (c *verifyTransactionClient) TransactionByHash(ctx context.Context, hash ty
 		return coretypes.Message{}, coretypes.TransactionStatusPending, err
 	}
 
-	message, err := transaction.AsMessage(signer)
+	message, err := transaction.AsMessage(signer, nil)
 	if err != nil {
 		return coretypes.Message{}, coretypes.TransactionStatusPending, err
 	}
@@ -318,6 +318,10 @@ func (s *Service) UpdateMailservers(nodes []*enode.Node) error {
 	return nil
 }
 
+func (s *Service) SetMailserver(peer []byte) {
+	s.messenger.SetMailserver(peer)
+}
+
 // Protocols returns a new protocols list. In this case, there are none.
 func (s *Service) Protocols() []p2p.Protocol {
 	return []p2p.Protocol{}
@@ -328,10 +332,13 @@ func (s *Service) APIs() []rpc.API {
 	panic("this is abstract service, use shhext or wakuext implementation")
 }
 
+func (s *Service) SetP2PServer(server *p2p.Server) {
+	s.server = server
+}
+
 // Start is run when a service is started.
 // It does nothing in this case but is required by `node.Service` interface.
-func (s *Service) Start(server *p2p.Server) error {
-	s.server = server
+func (s *Service) Start() error {
 	return nil
 }
 
@@ -353,6 +360,7 @@ func (s *Service) Stop() error {
 			log.Error("failed to stop messenger", "err", err)
 			return err
 		}
+		s.messenger = nil
 	}
 
 	return nil

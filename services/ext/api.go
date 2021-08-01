@@ -69,6 +69,9 @@ type MessagesRequest struct {
 	// Cursor is used as starting point for paginated requests
 	Cursor string `json:"cursor"`
 
+	// StoreCursor is used as starting point for WAKUV2 paginatedRequests
+	StoreCursor *StoreRequestCursor `json:"storeCursor"`
+
 	// Topic is a regular Whisper topic.
 	// DEPRECATED
 	Topic types.TopicType `json:"topic"`
@@ -79,40 +82,6 @@ type MessagesRequest struct {
 	// SymKeyID is an ID of a symmetric key to authenticate to MailServer.
 	// It's derived from MailServer password.
 	SymKeyID string `json:"symKeyID"`
-
-	// Timeout is the time to live of the request specified in seconds.
-	// Default is 10 seconds
-	Timeout time.Duration `json:"timeout"`
-
-	// Force ensures that requests will bypass enforced delay.
-	Force bool `json:"force"`
-}
-
-// StoreRequest is a WakuV2 RequestMessages() request payload.
-type StoreRequest struct {
-	// MailServerPeer is MailServer's libp2p peer address.
-	MailServerPeer string `json:"mailServerPeer"`
-
-	// From is a lower bound of time range (optional).
-	// Default is 24 hours back from now.
-	From uint64 `json:"from"`
-
-	// To is a upper bound of time range (optional).
-	// Default is now.
-	To uint64 `json:"to"`
-
-	// PageSize determines the number of messages sent by the mail server
-	// for the current paginated request
-	PageSize uint64 `json:"pageSize"`
-
-	// Asc indicates if the ordering of the messages is ascending or descending  (ordered by timestamp)
-	Asc bool `json:"asc"`
-
-	// Cursor is used as starting point for paginated requests
-	Cursor *StoreRequestCursor `json:"cursor"`
-
-	// Topics is a list of Whisper topics.
-	Topics []types.TopicType `json:"topics"`
 
 	// Timeout is the time to live of the request specified in seconds.
 	// Default is 10 seconds
@@ -144,30 +113,6 @@ func (r *MessagesRequest) SetDefaults(now time.Time) {
 
 	if r.Timeout == 0 {
 		r.Timeout = defaultRequestTimeout
-	}
-}
-
-func (r *StoreRequest) SetDefaults(now time.Time) {
-	// set From and To defaults
-	if r.To == 0 {
-		r.To = uint64(now.UTC().Unix())
-	}
-
-	if r.From == 0 {
-		oneDay := uint64(86400) // -24 hours
-		if r.To < oneDay {
-			r.From = 0
-		} else {
-			r.From = r.To - oneDay
-		}
-	}
-
-	if r.Timeout == 0 {
-		r.Timeout = defaultRequestTimeout
-	}
-
-	if r.PageSize == 0 {
-		r.PageSize = 100
 	}
 }
 
@@ -302,6 +247,10 @@ func (api *PublicAPI) SaveChat(parent context.Context, chat *protocol.Chat) erro
 	return api.service.messenger.SaveChat(chat)
 }
 
+func (api *PublicAPI) SaveMessages(parent context.Context, messages []*common.Message) error {
+	return api.service.messenger.SaveMessages(messages)
+}
+
 func (api *PublicAPI) CreateOneToOneChat(parent context.Context, request *requests.CreateOneToOneChat) (*protocol.MessengerResponse, error) {
 	return api.service.messenger.CreateOneToOneChat(request)
 }
@@ -387,7 +336,7 @@ func (api *PublicAPI) JoinedCommunities(parent context.Context) ([]*communities.
 
 // JoinCommunity joins a community with the given ID
 func (api *PublicAPI) JoinCommunity(parent context.Context, communityID types.HexBytes) (*protocol.MessengerResponse, error) {
-	return api.service.messenger.JoinCommunity(communityID)
+	return api.service.messenger.JoinCommunity(parent, communityID)
 }
 
 // LeaveCommunity leaves a commuity with the given ID
@@ -415,13 +364,13 @@ func (api *PublicAPI) ExportCommunity(id types.HexBytes) (types.HexBytes, error)
 }
 
 // ImportCommunity imports a community with the given private key in hex
-func (api *PublicAPI) ImportCommunity(hexPrivateKey string) (*protocol.MessengerResponse, error) {
+func (api *PublicAPI) ImportCommunity(ctx context.Context, hexPrivateKey string) (*protocol.MessengerResponse, error) {
 	// Strip the 0x from the beginning
 	privateKey, err := crypto.HexToECDSA(hexPrivateKey[2:])
 	if err != nil {
 		return nil, err
 	}
-	return api.service.messenger.ImportCommunity(privateKey)
+	return api.service.messenger.ImportCommunity(ctx, privateKey)
 
 }
 
@@ -430,9 +379,14 @@ func (api *PublicAPI) CreateCommunityChat(communityID types.HexBytes, c *protobu
 	return api.service.messenger.CreateCommunityChat(communityID, c)
 }
 
-// CreateCommunityChat creates a community chat in the given community
+// EditCommunityChat edits a community chat in the given community
 func (api *PublicAPI) EditCommunityChat(communityID types.HexBytes, chatID string, c *protobuf.CommunityChat) (*protocol.MessengerResponse, error) {
 	return api.service.messenger.EditCommunityChat(communityID, chatID, c)
+}
+
+// DeleteCommunityChat deletes a community chat in the given community
+func (api *PublicAPI) DeleteCommunityChat(communityID types.HexBytes, chatID string) (*protocol.MessengerResponse, error) {
+	return api.service.messenger.DeleteCommunityChat(communityID, chatID)
 }
 
 // InviteUsersToCommunity invites the users with pks to the community with ID
@@ -520,6 +474,10 @@ type ApplicationPinnedMessagesResponse struct {
 	Cursor         string                  `json:"cursor"`
 }
 
+type ApplicationStatusUpdatesResponse struct {
+	StatusUpdates []protocol.UserStatus `json:"statusUpdates"`
+}
+
 func (api *PublicAPI) ChatMessages(chatID, cursor string, limit int) (*ApplicationMessagesResponse, error) {
 	messages, cursor, err := api.service.messenger.MessageByChatID(chatID, cursor, limit)
 	if err != nil {
@@ -544,8 +502,23 @@ func (api *PublicAPI) ChatPinnedMessages(chatID, cursor string, limit int) (*App
 	}, nil
 }
 
+func (api *PublicAPI) StatusUpdates() (*ApplicationStatusUpdatesResponse, error) {
+	statusUpdates, err := api.service.messenger.StatusUpdates()
+	if err != nil {
+		return nil, err
+	}
+
+	return &ApplicationStatusUpdatesResponse{
+		StatusUpdates: statusUpdates,
+	}, nil
+}
+
 func (api *PublicAPI) StartMessenger() (*protocol.MessengerResponse, error) {
 	return api.service.StartMessenger()
+}
+
+func (api *PublicAPI) SetUserStatus(ctx context.Context, status int, customText string) error {
+	return api.service.messenger.SetUserStatus(ctx, status, customText)
 }
 
 func (api *PublicAPI) DeleteMessage(id string) error {
@@ -598,6 +571,10 @@ func (api *PublicAPI) SendChatMessages(ctx context.Context, messages []*common.M
 
 func (api *PublicAPI) EditMessage(ctx context.Context, request *requests.EditMessage) (*protocol.MessengerResponse, error) {
 	return api.service.messenger.EditMessage(ctx, request)
+}
+
+func (api *PublicAPI) DeleteMessageAndSend(ctx context.Context, messageID string) (*protocol.MessengerResponse, error) {
+	return api.service.messenger.DeleteMessageAndSend(ctx, messageID)
 }
 
 func (api *PublicAPI) SendPinMessage(ctx context.Context, message *common.PinMessage) (*protocol.MessengerResponse, error) {
@@ -662,6 +639,12 @@ func (api *PublicAPI) UpdateMailservers(enodes []string) error {
 		nodes[i] = node
 	}
 	return api.service.UpdateMailservers(nodes)
+}
+
+// Used in WakuV2 - Once proper peer management is added, we should probably remove this, or at least
+// change mailserver so we use a peer.ID instead of a string / []byte
+func (api *PublicAPI) SetMailserver(peer string) {
+	api.service.SetMailserver([]byte(peer))
 }
 
 // PushNotifications server endpoints

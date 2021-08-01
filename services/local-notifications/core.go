@@ -153,7 +153,7 @@ func pushMessage(notification *Notification) {
 }
 
 // Start Worker which processes all incoming messages
-func (s *Service) Start(_ *p2p.Server) error {
+func (s *Service) Start() error {
 	s.started = true
 
 	s.transmitter.quit = make(chan struct{})
@@ -212,7 +212,6 @@ func (s *Service) APIs() []rpc.API {
 			Namespace: "localnotifications",
 			Version:   "0.1.0",
 			Service:   NewAPI(s),
-			Public:    true,
 		},
 	}
 }

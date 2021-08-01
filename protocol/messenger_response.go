@@ -24,16 +24,20 @@ type MessengerResponse struct {
 	notifications               map[string]*localnotifications.Notification
 	chats                       map[string]*Chat
 	removedChats                map[string]bool
+	removedMessages             map[string]bool
 	communities                 map[string]*communities.Community
 	activityCenterNotifications map[string]*ActivityCenterNotification
 	messages                    map[string]*common.Message
 	pinMessages                 map[string]*common.PinMessage
+	currentStatus               *UserStatus
+	statusUpdates               map[string]UserStatus
 }
 
 func (r *MessengerResponse) MarshalJSON() ([]byte, error) {
 	responseItem := struct {
 		Chats                   []*Chat                         `json:"chats,omitempty"`
 		RemovedChats            []string                        `json:"removedChats,omitempty"`
+		RemovedMessages         []string                        `json:"removedMessages,omitempty"`
 		Messages                []*common.Message               `json:"messages,omitempty"`
 		Contacts                []*Contact                      `json:"contacts,omitempty"`
 		Installations           []*multidevice.Installation     `json:"installations,omitempty"`
@@ -48,6 +52,8 @@ func (r *MessengerResponse) MarshalJSON() ([]byte, error) {
 		Notifications               []*localnotifications.Notification `json:"notifications"`
 		Communities                 []*communities.Community           `json:"communities,omitempty"`
 		ActivityCenterNotifications []*ActivityCenterNotification      `json:"activityCenterNotifications,omitempty"`
+		CurrentStatus               *UserStatus                        `json:"currentStatus,omitempty"`
+		StatusUpdates               []UserStatus                       `json:"statusUpdates,omitempty"`
 	}{
 		Contacts:                r.Contacts,
 		Installations:           r.Installations,
@@ -56,6 +62,7 @@ func (r *MessengerResponse) MarshalJSON() ([]byte, error) {
 		CommunityChanges:        r.CommunityChanges,
 		RequestsToJoinCommunity: r.RequestsToJoinCommunity,
 		Mailservers:             r.Mailservers,
+		CurrentStatus:           r.currentStatus,
 	}
 
 	responseItem.Messages = r.Messages()
@@ -63,8 +70,10 @@ func (r *MessengerResponse) MarshalJSON() ([]byte, error) {
 	responseItem.Chats = r.Chats()
 	responseItem.Communities = r.Communities()
 	responseItem.RemovedChats = r.RemovedChats()
+	responseItem.RemovedMessages = r.RemovedMessages()
 	responseItem.ActivityCenterNotifications = r.ActivityCenterNotifications()
 	responseItem.PinMessages = r.PinMessages()
+	responseItem.StatusUpdates = r.StatusUpdates()
 
 	return json.Marshal(responseItem)
 }
@@ -83,6 +92,14 @@ func (r *MessengerResponse) RemovedChats() []string {
 		chats = append(chats, chatID)
 	}
 	return chats
+}
+
+func (r *MessengerResponse) RemovedMessages() []string {
+	var messages []string
+	for messageID := range r.removedMessages {
+		messages = append(messages, messageID)
+	}
+	return messages
 }
 
 func (r *MessengerResponse) Communities() []*communities.Community {
@@ -109,6 +126,15 @@ func (r *MessengerResponse) PinMessages() []*common.PinMessage {
 	return pinMessages
 }
 
+func (r *MessengerResponse) StatusUpdates() []UserStatus {
+	var userStatus []UserStatus
+	for pk, s := range r.statusUpdates {
+		s.PublicKey = pk
+		userStatus = append(userStatus, s)
+	}
+	return userStatus
+}
+
 func (r *MessengerResponse) IsEmpty() bool {
 	return len(r.chats)+
 		len(r.messages)+
@@ -120,10 +146,13 @@ func (r *MessengerResponse) IsEmpty() bool {
 		len(r.communities)+
 		len(r.CommunityChanges)+
 		len(r.removedChats)+
+		len(r.removedMessages)+
 		len(r.Mailservers)+
 		len(r.notifications)+
+		len(r.statusUpdates)+
 		len(r.activityCenterNotifications)+
-		len(r.RequestsToJoinCommunity) == 0
+		len(r.RequestsToJoinCommunity) == 0 &&
+		r.currentStatus == nil
 }
 
 // Merge takes another response and appends the new Chats & new Messages and replaces
@@ -142,6 +171,7 @@ func (r *MessengerResponse) Merge(response *MessengerResponse) error {
 
 	r.AddChats(response.Chats())
 	r.AddRemovedChats(response.RemovedChats())
+	r.AddRemovedMessages(response.RemovedMessages())
 	r.AddNotifications(response.Notifications())
 	r.AddMessages(response.Messages())
 	r.AddCommunities(response.Communities())
@@ -210,6 +240,20 @@ func (r *MessengerResponse) AddRemovedChat(chatID string) {
 	r.removedChats[chatID] = true
 }
 
+func (r *MessengerResponse) AddRemovedMessages(messages []string) {
+	for _, m := range messages {
+		r.AddRemovedMessage(m)
+	}
+}
+
+func (r *MessengerResponse) AddRemovedMessage(messageID string) {
+	if r.removedMessages == nil {
+		r.removedMessages = make(map[string]bool)
+	}
+
+	r.removedMessages[messageID] = true
+}
+
 func (r *MessengerResponse) AddActivityCenterNotifications(ns []*ActivityCenterNotification) {
 	for _, n := range ns {
 		r.AddActivityCenterNotification(n)
@@ -244,6 +288,18 @@ func (r *MessengerResponse) AddPinMessages(pms []*common.PinMessage) {
 	for _, pm := range pms {
 		r.AddPinMessage(pm)
 	}
+}
+
+func (r *MessengerResponse) SetCurrentStatus(status UserStatus) {
+	r.currentStatus = &status
+}
+
+func (r *MessengerResponse) AddStatusUpdate(upd UserStatus) {
+	if r.statusUpdates == nil {
+		r.statusUpdates = make(map[string]UserStatus)
+	}
+
+	r.statusUpdates[upd.PublicKey] = upd
 }
 
 func (r *MessengerResponse) Messages() []*common.Message {

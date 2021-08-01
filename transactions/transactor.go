@@ -100,7 +100,7 @@ func (t *Transactor) SendTransactionWithSignature(args SendTxArgs, sig []byte) (
 	}
 
 	chainID := big.NewInt(int64(t.networkID))
-	signer := gethtypes.NewEIP155Signer(chainID)
+	signer := gethtypes.NewLondonSigner(chainID)
 
 	tx := t.buildTransaction(args)
 	t.addrLock.LockAddr(args.From)
@@ -205,7 +205,7 @@ func (t *Transactor) HashTransaction(args SendTxArgs) (validatedArgs SendTxArgs,
 	validatedArgs.Gas = &newGas
 
 	tx := t.buildTransaction(validatedArgs)
-	hash = types.Hash(gethtypes.NewEIP155Signer(chainID).Hash(tx))
+	hash = types.Hash(gethtypes.NewLondonSigner(chainID).Hash(tx))
 
 	return validatedArgs, hash, nil
 }
@@ -264,7 +264,7 @@ func (t *Transactor) validateAndPropagate(selectedAccount *account.SelectedExtKe
 		nonce = uint64(*args.Nonce)
 	}
 	gasPrice := (*big.Int)(args.GasPrice)
-	if args.GasPrice == nil {
+	if !args.IsDynamicFeeTx() && args.GasPrice == nil {
 		ctx, cancel = context.WithTimeout(context.Background(), t.rpcCallTimeout)
 		defer cancel()
 		gasPrice, err = t.gasCalculator.SuggestGasPrice(ctx)
@@ -277,7 +277,9 @@ func (t *Transactor) validateAndPropagate(selectedAccount *account.SelectedExtKe
 	value := (*big.Int)(args.Value)
 
 	var gas uint64
-	if args.Gas == nil {
+	if args.Gas != nil {
+		gas = uint64(*args.Gas)
+	} else if args.Gas == nil && !args.IsDynamicFeeTx() {
 		ctx, cancel = context.WithTimeout(context.Background(), t.rpcCallTimeout)
 		defer cancel()
 
@@ -303,13 +305,11 @@ func (t *Transactor) validateAndPropagate(selectedAccount *account.SelectedExtKe
 			t.log.Info("default gas will be used because estimated is lower", "estimated", gas, "default", defaultGas)
 			gas = defaultGas
 		}
-	} else {
-		gas = uint64(*args.Gas)
 	}
 
 	tx := t.buildTransactionWithOverrides(nonce, value, gas, gasPrice, args)
 
-	signedTx, err := gethtypes.SignTx(tx, gethtypes.NewEIP155Signer(chainID), selectedAccount.AccountKey.PrivateKey)
+	signedTx, err := gethtypes.SignTx(tx, gethtypes.NewLondonSigner(chainID), selectedAccount.AccountKey.PrivateKey)
 	if err != nil {
 		return hash, err
 	}
@@ -335,7 +335,33 @@ func (t *Transactor) buildTransactionWithOverrides(nonce uint64, value *big.Int,
 	var tx *gethtypes.Transaction
 
 	if args.To != nil {
-		tx = gethtypes.NewTransaction(nonce, common.Address(*args.To), value, gas, gasPrice, args.GetInput())
+		to := common.Address(*args.To)
+		var txData gethtypes.TxData
+
+		if args.IsDynamicFeeTx() {
+			gasTipCap := (*big.Int)(args.MaxPriorityFeePerGas)
+			gasFeeCap := (*big.Int)(args.MaxFeePerGas)
+
+			txData = &gethtypes.DynamicFeeTx{
+				Nonce:     nonce,
+				Gas:       gas,
+				GasTipCap: gasTipCap,
+				GasFeeCap: gasFeeCap,
+				To:        &to,
+				Value:     value,
+				Data:      args.GetInput(),
+			}
+		} else {
+			txData = &gethtypes.LegacyTx{
+				Nonce:    nonce,
+				GasPrice: gasPrice,
+				Gas:      gas,
+				To:       &to,
+				Value:    value,
+				Data:     args.GetInput(),
+			}
+		}
+		tx = gethtypes.NewTx(txData)
 		t.logNewTx(args, gas, gasPrice, value)
 	} else {
 		tx = gethtypes.NewContractCreation(nonce, value, gas, gasPrice, args.GetInput())

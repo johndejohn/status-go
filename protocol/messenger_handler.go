@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"encoding/hex"
 	"fmt"
@@ -62,13 +63,15 @@ func (m *Messenger) HandleMembershipUpdate(messageState *ReceivedMessageState, c
 
 	//if chat.InvitationAdmin exists means we are waiting for invitation request approvement, and in that case
 	//we need to create a new chat instance like we don't have a chat and just use a regular invitation flow
-	if chat == nil || len(chat.InvitationAdmin) > 0 {
+	waitingForApproval := chat != nil && len(chat.InvitationAdmin) > 0
+
+	if chat == nil || waitingForApproval {
 		if len(message.Events) == 0 {
 			return errors.New("can't create new group chat without events")
 		}
 
 		//approve invitations
-		if chat != nil && len(chat.InvitationAdmin) > 0 {
+		if waitingForApproval {
 
 			groupChatInvitation := &GroupChatInvitation{
 				GroupChatInvitation: protobuf.GroupChatInvitation{
@@ -104,8 +107,8 @@ func (m *Messenger) HandleMembershipUpdate(messageState *ReceivedMessageState, c
 		}
 		newChat := CreateGroupChat(messageState.Timesource)
 		// We set group chat inactive and create a notification instead
-		// unless is coming from us or a contact
-		isActive := messageState.CurrentMessageState.Contact.IsAdded() || messageState.CurrentMessageState.Contact.ID == ourKey
+		// unless is coming from us or a contact or were waiting for approval
+		isActive := messageState.CurrentMessageState.Contact.IsAdded() || messageState.CurrentMessageState.Contact.ID == ourKey || waitingForApproval
 		newChat.Active = isActive
 		chat = &newChat
 	} else {
@@ -147,6 +150,13 @@ func (m *Messenger) HandleMembershipUpdate(messageState *ReceivedMessageState, c
 	messageState.Response.AddChat(chat)
 	// Store in chats map as it might be a new one
 	messageState.AllChats.Store(chat.ID, chat)
+
+	if waitingForApproval {
+		_, err = m.ConfirmJoiningGroup(context.Background(), chat.ID)
+		if err != nil {
+			return err
+		}
+	}
 
 	if message.Message != nil {
 		messageState.CurrentMessageState.Message = *message.Message
@@ -548,6 +558,71 @@ func (m *Messenger) HandleEditMessage(response *MessengerResponse, editMessage E
 	return nil
 }
 
+func (m *Messenger) HandleDeleteMessage(response *MessengerResponse, deleteMessage DeleteMessage) error {
+	if err := ValidateDeleteMessage(deleteMessage.DeleteMessage); err != nil {
+		return err
+	}
+
+	messageID := deleteMessage.MessageId
+	// Check if it's already in the response
+	originalMessage := response.GetMessage(messageID)
+	// otherwise pull from database
+	if originalMessage == nil {
+		var err error
+		originalMessage, err = m.persistence.MessageByID(messageID)
+
+		if err != nil && err != common.ErrRecordNotFound {
+			return err
+		}
+	}
+
+	if originalMessage == nil {
+		return m.persistence.SaveDelete(deleteMessage)
+	}
+
+	chat, ok := m.allChats.Load(originalMessage.LocalChatID)
+	if !ok {
+		return errors.New("chat not found")
+	}
+
+	// Check edit is valid
+	if originalMessage.From != deleteMessage.From {
+		return errors.New("invalid delete, not the right author")
+	}
+
+	// Update message and return it
+	originalMessage.Deleted = true
+
+	err := m.persistence.SaveMessages([]*common.Message{originalMessage})
+	if err != nil {
+		return err
+	}
+
+	err = m.persistence.HideMessage(deleteMessage.MessageId)
+	if err != nil {
+		return err
+	}
+
+	if chat.LastMessage != nil && chat.LastMessage.ID == originalMessage.ID {
+		// Get last message that is not hidden
+		messages, _, err := m.persistence.MessageByChatID(originalMessage.LocalChatID, "", 1)
+		if err != nil {
+			return err
+		}
+		if messages != nil {
+			chat.LastMessage = messages[0]
+			err := m.saveChat(chat)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	response.AddRemovedMessage(messageID)
+	response.AddChat(chat)
+
+	return nil
+}
+
 func (m *Messenger) HandleChatMessage(state *ReceivedMessageState) error {
 	logger := m.logger.With(zap.String("site", "handleChatMessage"))
 	if err := ValidateReceivedChatMessage(&state.CurrentMessageState.Message, state.CurrentMessageState.WhisperTimestamp); err != nil {
@@ -619,6 +694,11 @@ func (m *Messenger) HandleChatMessage(state *ReceivedMessageState) error {
 		return err
 	}
 
+	err = m.checkForDeletes(receivedMessage)
+	if err != nil {
+		return err
+	}
+
 	err = chat.UpdateFromMessage(receivedMessage, m.getTimesource())
 	if err != nil {
 		return err
@@ -685,10 +765,11 @@ func (m *Messenger) HandleRequestAddressForTransaction(messageState *ReceivedMes
 	}
 	message := &common.Message{
 		ChatMessage: protobuf.ChatMessage{
-			Clock:       command.Clock,
-			Timestamp:   messageState.CurrentMessageState.WhisperTimestamp,
-			Text:        "Request address for transaction",
-			ChatId:      contactIDFromPublicKey(&m.identity.PublicKey),
+			Clock:     command.Clock,
+			Timestamp: messageState.CurrentMessageState.WhisperTimestamp,
+			Text:      "Request address for transaction",
+			// ChatId is only used as-is for messages sent to oneself (i.e: mostly sync) so no need to check it here
+			ChatId:      command.GetChatId(),
 			MessageType: protobuf.MessageType_ONE_TO_ONE,
 			ContentType: protobuf.ChatMessage_TRANSACTION_COMMAND,
 		},
@@ -709,10 +790,11 @@ func (m *Messenger) HandleRequestTransaction(messageState *ReceivedMessageState,
 	}
 	message := &common.Message{
 		ChatMessage: protobuf.ChatMessage{
-			Clock:       command.Clock,
-			Timestamp:   messageState.CurrentMessageState.WhisperTimestamp,
-			Text:        "Request transaction",
-			ChatId:      contactIDFromPublicKey(&m.identity.PublicKey),
+			Clock:     command.Clock,
+			Timestamp: messageState.CurrentMessageState.WhisperTimestamp,
+			Text:      "Request transaction",
+			// ChatId is only used for messages sent to oneself (i.e: mostly sync) so no need to check it here
+			ChatId:      command.GetChatId(),
 			MessageType: protobuf.MessageType_ONE_TO_ONE,
 			ContentType: protobuf.ChatMessage_TRANSACTION_COMMAND,
 		},
@@ -758,6 +840,7 @@ func (m *Messenger) HandleAcceptRequestAddressForTransaction(messageState *Recei
 	initialMessage.CommandParameters.Address = command.Address
 	initialMessage.Seen = false
 	initialMessage.CommandParameters.CommandState = common.CommandStateRequestAddressForTransactionAccepted
+	initialMessage.ChatId = command.GetChatId()
 
 	// Hide previous message
 	previousMessage, err := m.persistence.MessageByCommandID(messageState.CurrentMessageState.Contact.ID, command.Id)
@@ -827,6 +910,7 @@ func (m *Messenger) HandleDeclineRequestAddressForTransaction(messageState *Rece
 	oldMessage.Text = requestAddressForTransactionDeclinedMessage
 	oldMessage.Seen = false
 	oldMessage.CommandParameters.CommandState = common.CommandStateRequestAddressForTransactionDeclined
+	oldMessage.ChatId = command.GetChatId()
 
 	// Hide previous message
 	err = m.persistence.HideMessage(command.Id)
@@ -868,6 +952,7 @@ func (m *Messenger) HandleDeclineRequestTransaction(messageState *ReceivedMessag
 	oldMessage.Text = transactionRequestDeclinedMessage
 	oldMessage.Seen = false
 	oldMessage.CommandParameters.CommandState = common.CommandStateRequestTransactionDeclined
+	oldMessage.ChatId = command.GetChatId()
 
 	// Hide previous message
 	err = m.persistence.HideMessage(command.Id)
@@ -1175,6 +1260,21 @@ func (m *Messenger) checkForEdits(message *common.Message) error {
 	}
 
 	return nil
+}
+
+func (m *Messenger) checkForDeletes(message *common.Message) error {
+	// Check for any pending deletes
+	// If any pending deletes are available and valid, apply them
+	messageDeletes, err := m.persistence.GetDeletes(message.ID, message.From)
+	if err != nil {
+		return err
+	}
+
+	if len(messageDeletes) == 0 {
+		return nil
+	}
+
+	return m.applyDeleteMessage(messageDeletes, message)
 }
 
 func (m *Messenger) isMessageAllowedFrom(publicKey string, chat *Chat) (bool, error) {

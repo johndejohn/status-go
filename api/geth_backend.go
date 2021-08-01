@@ -11,47 +11,26 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	ethcrypto "github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
-	gethnode "github.com/ethereum/go-ethereum/node"
 	signercore "github.com/ethereum/go-ethereum/signer/core"
 
 	"github.com/status-im/status-go/account"
 	"github.com/status-im/status-go/appdatabase"
-	"github.com/status-im/status-go/appmetrics"
 	"github.com/status-im/status-go/connection"
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/logutils"
-	"github.com/status-im/status-go/mailserver/registry"
 	"github.com/status-im/status-go/multiaccounts"
 	"github.com/status-im/status-go/multiaccounts/accounts"
 	"github.com/status-im/status-go/node"
 	"github.com/status-im/status-go/params"
 	"github.com/status-im/status-go/rpc"
-	accountssvc "github.com/status-im/status-go/services/accounts"
-	appmetricsservice "github.com/status-im/status-go/services/appmetrics"
-	"github.com/status-im/status-go/services/browsers"
-	localnotifications "github.com/status-im/status-go/services/local-notifications"
-	"github.com/status-im/status-go/services/mailservers"
-	"github.com/status-im/status-go/services/permissions"
 	"github.com/status-im/status-go/services/personal"
-	"github.com/status-im/status-go/services/rpcfilters"
-	"github.com/status-im/status-go/services/rpcstats"
-	"github.com/status-im/status-go/services/subscriptions"
 	"github.com/status-im/status-go/services/typeddata"
-	"github.com/status-im/status-go/services/wakuext"
-	"github.com/status-im/status-go/services/wallet"
 	"github.com/status-im/status-go/signal"
 	"github.com/status-im/status-go/transactions"
-)
-
-const (
-	contractQueryTimeout = 1000 * time.Millisecond
 )
 
 var (
@@ -59,8 +38,6 @@ var (
 	ErrWhisperClearIdentitiesFailure = errors.New("failed to clear whisper identities")
 	// ErrWhisperIdentityInjectionFailure injecting whisper identities has failed.
 	ErrWhisperIdentityInjectionFailure = errors.New("failed to inject identity into Whisper")
-	// ErrWakuClearIdentitiesFailure clearing whisper identities has failed.
-	ErrWakuClearIdentitiesFailure = errors.New("failed to clear waku identities")
 	// ErrWakuIdentityInjectionFailure injecting whisper identities has failed.
 	ErrWakuIdentityInjectionFailure = errors.New("failed to inject identity into waku")
 	// ErrUnsupportedRPCMethod is for methods not supported by the RPC interface
@@ -82,7 +59,6 @@ type GethStatusBackend struct {
 	appDB                *sql.DB
 	statusNode           *node.StatusNode
 	personalAPI          *personal.PublicAPI
-	rpcFilters           *rpcfilters.Service
 	multiaccountsDB      *multiaccounts.Database
 	account              *multiaccounts.Account
 	accountManager       *account.GethManager
@@ -92,26 +68,30 @@ type GethStatusBackend struct {
 	selectedAccountKeyID string
 	log                  log.Logger
 	allowAllRPC          bool // used only for tests, disables api method restrictions
+
 }
 
 // NewGethStatusBackend create a new GethStatusBackend instance
 func NewGethStatusBackend() *GethStatusBackend {
 	defer log.Info("Movement backend initialized", "backend", "geth", "version", params.Version, "commit", params.GitCommit)
 
+	backend := &GethStatusBackend{}
+	backend.initialize()
+	return backend
+}
+
+func (b *GethStatusBackend) initialize() {
 	statusNode := node.New()
 	accountManager := account.NewGethManager()
 	transactor := transactions.NewTransactor()
 	personalAPI := personal.NewAPI()
-	rpcFilters := rpcfilters.New(statusNode)
 
-	return &GethStatusBackend{
-		statusNode:     statusNode,
-		accountManager: accountManager,
-		transactor:     transactor,
-		personalAPI:    personalAPI,
-		rpcFilters:     rpcFilters,
-		log:            log.New("package", "status-go/api.GethStatusBackend"),
-	}
+	b.statusNode = statusNode
+	b.accountManager = accountManager
+	b.transactor = transactor
+	b.personalAPI = personalAPI
+	b.statusNode.SetMultiaccountsDB(b.multiaccountsDB)
+	b.log = log.New("package", "status-go/api.GethStatusBackend")
 }
 
 // StatusNode returns reference to node manager
@@ -168,6 +148,8 @@ func (b *GethStatusBackend) OpenAccounts() error {
 		return err
 	}
 	b.multiaccountsDB = db
+	// Probably we should iron out a bit better how to create/dispose of the status-service
+	b.statusNode.SetMultiaccountsDB(db)
 	return nil
 }
 
@@ -252,6 +234,7 @@ func (b *GethStatusBackend) ensureAppDBOpened(account multiaccounts.Account, pas
 		b.log.Error("failed to initialize db", "err", err)
 		return err
 	}
+	b.statusNode.SetAppDB(b.appDB)
 	return nil
 }
 
@@ -291,7 +274,9 @@ func (b *GethStatusBackend) startNodeWithKey(acc multiaccounts.Account, password
 	if err != nil {
 		return err
 	}
-	b.accountManager.SetChatAccount(chatKey)
+	if err := b.accountManager.SetChatAccount(chatKey); err != nil {
+		return err
+	}
 	_, err = b.accountManager.SelectedChatAccount()
 	if err != nil {
 		return err
@@ -478,6 +463,77 @@ func (b *GethStatusBackend) ChangeDatabasePassword(keyUID string, password strin
 	return nil
 }
 
+func (b *GethStatusBackend) ConvertToKeycardAccount(keyStoreDir string, account multiaccounts.Account, settings accounts.Settings, password string, newPassword string) error {
+	err := b.multiaccountsDB.UpdateAccountKeycardPairing(account)
+	if err != nil {
+		return err
+	}
+
+	err = b.ensureAppDBOpened(account, password)
+	if err != nil {
+		return err
+	}
+
+	accountDB := accounts.NewDB(b.appDB)
+	err = accountDB.SaveSetting("keycard-instance_uid", settings.KeycardInstanceUID)
+	if err != nil {
+		return err
+	}
+
+	err = accountDB.SaveSetting("keycard-paired_on", settings.KeycardPAiredOn)
+	if err != nil {
+		return err
+	}
+
+	err = accountDB.SaveSetting("keycard-pairing", settings.KeycardPairing)
+	if err != nil {
+		return err
+	}
+
+	err = accountDB.SaveSetting("mnemonic", nil)
+	if err != nil {
+		return err
+	}
+
+	err = accountDB.DeleteSeedAndKeyAccounts()
+	if err != nil {
+		return err
+	}
+
+	dbPath := filepath.Join(b.rootDataDir, fmt.Sprintf("%s.db", account.KeyUID))
+	err = appdatabase.ChangeDatabasePassword(dbPath, password, newPassword)
+	if err != nil {
+		return err
+	}
+
+	err = b.closeAppDB()
+	if err != nil {
+		return err
+	}
+
+	return os.RemoveAll(keyStoreDir)
+}
+
+func (b *GethStatusBackend) VerifyDatabasePassword(keyUID string, password string) error {
+	err := b.ensureAppDBOpened(multiaccounts.Account{KeyUID: keyUID}, password)
+	if err != nil {
+		return err
+	}
+
+	accountsDB := accounts.NewDB(b.appDB)
+	_, err = accountsDB.GetWalletAddress()
+	if err != nil {
+		return err
+	}
+
+	err = b.closeAppDB()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (b *GethStatusBackend) SaveAccountAndStartNodeWithKey(acc multiaccounts.Account, password string, settings accounts.Settings, nodecfg *params.NodeConfig, subaccs []accounts.Account, keyHex string) error {
 	err := b.SaveAccount(acc)
 	if err != nil {
@@ -566,66 +622,6 @@ func (b *GethStatusBackend) GetNodeConfig() (*params.NodeConfig, error) {
 	return b.loadNodeConfig()
 }
 
-func (b *GethStatusBackend) rpcFiltersService() gethnode.ServiceConstructor {
-	return func(*gethnode.ServiceContext) (gethnode.Service, error) {
-		return rpcfilters.New(b.statusNode), nil
-	}
-}
-
-func (b *GethStatusBackend) subscriptionService() gethnode.ServiceConstructor {
-	return func(*gethnode.ServiceContext) (gethnode.Service, error) {
-		return subscriptions.New(func() *rpc.Client { return b.statusNode.RPCPrivateClient() }), nil
-	}
-}
-
-func (b *GethStatusBackend) rpcStatsService() gethnode.ServiceConstructor {
-	return func(*gethnode.ServiceContext) (gethnode.Service, error) {
-		return rpcstats.New(), nil
-	}
-}
-
-func (b *GethStatusBackend) accountsService(accountsFeed *event.Feed) gethnode.ServiceConstructor {
-	return func(*gethnode.ServiceContext) (gethnode.Service, error) {
-		return accountssvc.NewService(accounts.NewDB(b.appDB), b.multiaccountsDB, b.accountManager.Manager, accountsFeed), nil
-	}
-}
-
-func (b *GethStatusBackend) browsersService() gethnode.ServiceConstructor {
-	return func(*gethnode.ServiceContext) (gethnode.Service, error) {
-		return browsers.NewService(browsers.NewDB(b.appDB)), nil
-	}
-}
-
-func (b *GethStatusBackend) permissionsService() gethnode.ServiceConstructor {
-	return func(*gethnode.ServiceContext) (gethnode.Service, error) {
-		return permissions.NewService(permissions.NewDB(b.appDB)), nil
-	}
-}
-
-func (b *GethStatusBackend) mailserversService() gethnode.ServiceConstructor {
-	return func(*gethnode.ServiceContext) (gethnode.Service, error) {
-		return mailservers.NewService(mailservers.NewDB(b.appDB)), nil
-	}
-}
-
-func (b *GethStatusBackend) appmetricsService() gethnode.ServiceConstructor {
-	return func(*gethnode.ServiceContext) (gethnode.Service, error) {
-		return appmetricsservice.NewService(appmetrics.NewDB(b.appDB)), nil
-	}
-}
-
-func (b *GethStatusBackend) walletService(network uint64, accountsFeed *event.Feed) gethnode.ServiceConstructor {
-	return func(*gethnode.ServiceContext) (gethnode.Service, error) {
-		return wallet.NewService(wallet.NewDB(b.appDB, network), accountsFeed), nil
-	}
-}
-
-func (b *GethStatusBackend) localNotificationsService(network uint64) gethnode.ServiceConstructor {
-	return func(*gethnode.ServiceContext) (gethnode.Service, error) {
-		return localnotifications.NewService(b.appDB, network), nil
-	}
-}
-
 func (b *GethStatusBackend) startNode(config *params.NodeConfig) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -645,26 +641,12 @@ func (b *GethStatusBackend) startNode(config *params.NodeConfig) (err error) {
 	if err := config.Validate(); err != nil {
 		return err
 	}
-	accountsFeed := &event.Feed{}
-	services := []gethnode.ServiceConstructor{}
-	services = appendIf(config.UpstreamConfig.Enabled, services, b.rpcFiltersService())
-	services = append(services, b.subscriptionService())
-	services = append(services, b.rpcStatsService())
-	services = append(services, b.appmetricsService())
-	services = appendIf(b.appDB != nil && b.multiaccountsDB != nil, services, b.accountsService(accountsFeed))
-	services = appendIf(config.BrowsersConfig.Enabled, services, b.browsersService())
-	services = appendIf(config.PermissionsConfig.Enabled, services, b.permissionsService())
-	services = appendIf(config.MailserversConfig.Enabled, services, b.mailserversService())
-	services = appendIf(config.WalletConfig.Enabled, services, b.walletService(config.NetworkID, accountsFeed))
-	// We ignore for now local notifications flag as users who are upgrading have no mean to enable it
-	services = append(services, b.localNotificationsService(config.NetworkID))
 
 	manager := b.accountManager.GetManager()
 	if manager == nil {
 		return errors.New("ethereum accounts.Manager is nil")
 	}
 	if err = b.statusNode.StartWithOptions(config, node.StartOptions{
-		Services: services,
 		// The peers discovery protocols are started manually after
 		// `node.ready` signal is sent.
 		// It was discussed in https://github.com/status-im/status-go/pull/1333.
@@ -673,32 +655,18 @@ func (b *GethStatusBackend) startNode(config *params.NodeConfig) (err error) {
 	}); err != nil {
 		return
 	}
-	if config.WalletConfig.Enabled {
-		walletService, err := b.statusNode.WalletService()
-		if err != nil {
-			return err
-		}
-		walletService.SetClient(b.statusNode.RPCClient().Ethclient())
-	}
+
 	signal.SendNodeStarted()
 
 	b.transactor.SetNetworkID(config.NetworkID)
 	b.transactor.SetRPC(b.statusNode.RPCClient(), rpc.DefaultCallTimeout)
-	b.personalAPI.SetRPC(b.statusNode.RPCPrivateClient(), rpc.DefaultCallTimeout)
+	b.personalAPI.SetRPC(b.statusNode.RPCClient(), rpc.DefaultCallTimeout)
 
 	if err = b.registerHandlers(); err != nil {
 		b.log.Error("Handler registration failed", "err", err)
 		return
 	}
 	b.log.Info("Handlers registered")
-
-	if st, err := b.statusNode.StatusService(); err == nil {
-		st.SetAccountManager(b.accountManager)
-	}
-
-	if st, err := b.statusNode.PeerService(); err == nil {
-		st.SetDiscoverer(b.StatusNode())
-	}
 
 	// Handle a case when a node is stopped and resumed.
 	// If there is no account selected, an error is returned.
@@ -727,10 +695,11 @@ func (b *GethStatusBackend) StopNode() error {
 }
 
 func (b *GethStatusBackend) stopNode() error {
-	if !b.IsNodeRunning() {
-		return node.ErrNoRunningNode
+	if b.statusNode == nil || !b.IsNodeRunning() {
+		return nil
 	}
 	defer signal.SendNodeStopped()
+
 	return b.statusNode.Stop()
 }
 
@@ -776,43 +745,9 @@ func (b *GethStatusBackend) CallRPC(inputJSON string) (string, error) {
 	return client.CallRaw(inputJSON), nil
 }
 
-// GetNodesFromContract returns a list of nodes from the contract
-func (b *GethStatusBackend) GetNodesFromContract(rpcEndpoint string, contractAddress string) ([]string, error) {
-	var response []string
-
-	ctx, cancel := context.WithTimeout(context.Background(), contractQueryTimeout)
-	defer cancel()
-
-	ethclient, err := ethclient.DialContext(ctx, rpcEndpoint)
-	if err != nil {
-		return response, err
-	}
-
-	contract, err := registry.NewNodes(common.HexToAddress(contractAddress), ethclient)
-	if err != nil {
-		return response, err
-	}
-
-	nodeCount, err := contract.NodeCount(nil)
-	if err != nil {
-		return response, err
-	}
-
-	one := big.NewInt(1)
-	for i := big.NewInt(0); i.Cmp(nodeCount) < 0; i.Add(i, one) {
-		node, err := contract.Nodes(nil, i)
-		if err != nil {
-			return response, err
-		}
-		response = append(response, node)
-	}
-
-	return response, nil
-}
-
 // CallPrivateRPC executes public and private RPC requests on node's in-proc RPC server.
 func (b *GethStatusBackend) CallPrivateRPC(inputJSON string) (string, error) {
-	client := b.statusNode.RPCPrivateClient()
+	client := b.statusNode.RPCClient()
 	if client == nil {
 		return "", ErrRPCClientUnavailable
 	}
@@ -831,7 +766,7 @@ func (b *GethStatusBackend) SendTransaction(sendArgs transactions.SendTxArgs, pa
 		return
 	}
 
-	go b.rpcFilters.TriggerTransactionSentToUpstreamEvent(hash)
+	go b.statusNode.RPCFiltersService().TriggerTransactionSentToUpstreamEvent(hash)
 
 	return
 }
@@ -842,7 +777,7 @@ func (b *GethStatusBackend) SendTransactionWithSignature(sendArgs transactions.S
 		return
 	}
 
-	go b.rpcFilters.TriggerTransactionSentToUpstreamEvent(hash)
+	go b.statusNode.RPCFiltersService().TriggerTransactionSentToUpstreamEvent(hash)
 
 	return
 }
@@ -953,12 +888,6 @@ func (b *GethStatusBackend) registerHandlers() error {
 		return errors.New("RPC client unavailable")
 	}
 
-	if c := b.StatusNode().RPCPrivateClient(); c != nil {
-		clients = append(clients, c)
-	} else {
-		return errors.New("RPC private client unavailable")
-	}
-
 	for _, client := range clients {
 		client.RegisterHandler(
 			params.AccountsMethodName,
@@ -999,10 +928,7 @@ func (b *GethStatusBackend) ConnectionChange(typ string, expensive bool) {
 	b.log.Info("Network state change", "old", b.connectionState, "new", state)
 
 	b.connectionState = state
-	err := b.statusNode.ConnectionChanged(state)
-	if err != nil {
-		b.log.Error("failed to notify of connection changed", "err", err)
-	}
+	b.statusNode.ConnectionChanged(state)
 
 	// logic of handling state changes here
 	// restart node? force peers reconnect? etc
@@ -1025,54 +951,18 @@ func (b *GethStatusBackend) AppStateChange(state string) {
 }
 
 func (b *GethStatusBackend) StopLocalNotifications() error {
-	localPN, err := b.statusNode.LocalNotificationsService()
-	if err != nil {
-		b.log.Error("Retrieving of LocalNotifications service failed on StopLocalNotifications", "error", err)
+	if b.statusNode == nil {
 		return nil
 	}
-
-	if localPN.IsStarted() {
-		err = localPN.Stop()
-		if err != nil {
-			b.log.Error("LocalNotifications service stop failed on StopLocalNotifications", "error", err)
-			return nil
-		}
-	}
-
-	return nil
+	return b.statusNode.StopLocalNotifications()
 }
 
 func (b *GethStatusBackend) StartLocalNotifications() error {
-	localPN, err := b.statusNode.LocalNotificationsService()
-
-	if err != nil {
-		b.log.Error("Retrieving of local notifications service failed on StartLocalNotifications", "error", err)
+	if b.statusNode == nil {
 		return nil
 	}
+	return b.statusNode.StartLocalNotifications()
 
-	wallet, err := b.statusNode.WalletService()
-	if err != nil {
-		b.log.Error("Retrieving of wallet service failed on StartLocalNotifications", "error", err)
-		return nil
-	}
-
-	if !localPN.IsStarted() {
-		err = localPN.Start(b.statusNode.Server())
-
-		if err != nil {
-			b.log.Error("LocalNotifications service start failed on StartLocalNotifications", "error", err)
-			return nil
-		}
-	}
-
-	err = localPN.SubscribeWallet(wallet.GetFeed())
-
-	if err != nil {
-		b.log.Error("LocalNotifications service could not subscribe to wallet on StartLocalNotifications", "error", err)
-		return nil
-	}
-
-	return nil
 }
 
 // Logout clears whisper identities.
@@ -1090,40 +980,26 @@ func (b *GethStatusBackend) Logout() error {
 	}
 
 	b.AccountManager().Logout()
+	b.appDB = nil
 
+	if b.statusNode != nil {
+		if err := b.statusNode.Stop(); err != nil {
+			return err
+		}
+		b.statusNode = nil
+	}
+	// re-initialize the node, at some point we should better manage the lifecycle
+	b.initialize()
 	return nil
 }
 
 // cleanupServices stops parts of services that doesn't managed by a node and removes injected data from services.
 func (b *GethStatusBackend) cleanupServices() error {
-	wakuService, err := b.statusNode.WakuService()
-	switch err {
-	case node.ErrServiceUnknown: // Waku was never registered
-	case nil:
-		if err := wakuService.DeleteKeyPairs(); err != nil {
-			return fmt.Errorf("%s: %v", ErrWakuClearIdentitiesFailure, err)
-		}
-		b.selectedAccountKeyID = ""
-	default:
-		return err
+	b.selectedAccountKeyID = ""
+	if b.statusNode == nil {
+		return nil
 	}
-
-	if b.statusNode.Config().WalletConfig.Enabled {
-		wallet, err := b.statusNode.WalletService()
-		switch err {
-		case node.ErrServiceUnknown:
-		case nil:
-			if wallet.IsStarted() {
-				err = wallet.Stop()
-				if err != nil {
-					return err
-				}
-			}
-		default:
-			return err
-		}
-	}
-	return nil
+	return b.statusNode.Cleanup()
 }
 
 func (b *GethStatusBackend) closeAppDB() error {
@@ -1170,9 +1046,6 @@ func (b *GethStatusBackend) GetActiveAccount() (*multiaccounts.Account, error) {
 
 	return b.account, nil
 }
-func (b *GethStatusBackend) WakuExtService() (*wakuext.Service, error) {
-	return b.statusNode.WakuExtService()
-}
 
 func (b *GethStatusBackend) injectAccountsIntoServices() error {
 	chatAccount, err := b.accountManager.SelectedChatAccount()
@@ -1187,11 +1060,9 @@ func (b *GethStatusBackend) injectAccountsIntoServices() error {
 		return err
 	}
 
-	wakuService, err := b.statusNode.WakuService()
+	wakuService := b.statusNode.WakuService()
 
-	switch err {
-	case node.ErrServiceUnknown: // Waku was never registered
-	case nil:
+	if wakuService != nil {
 		if err := wakuService.DeleteKeyPairs(); err != nil { // err is not possible; method return value is incorrect
 			return err
 		}
@@ -1199,29 +1070,21 @@ func (b *GethStatusBackend) injectAccountsIntoServices() error {
 		if err != nil {
 			return ErrWakuIdentityInjectionFailure
 		}
-	default:
-		return err
-	}
+		st := b.statusNode.WakuExtService()
 
-	if wakuService != nil {
-		st, err := b.statusNode.WakuExtService()
-		if err != nil {
-			return err
+		if st != nil {
+			if err := st.InitProtocol(identity, b.appDB, b.multiaccountsDB, acc, logutils.ZapLogger()); err != nil {
+				return err
+			}
+			// Set initial connection state
+			st.ConnectionChanged(b.connectionState)
 		}
 
-		if err := st.InitProtocol(identity, b.appDB, b.multiaccountsDB, acc, logutils.ZapLogger()); err != nil {
-			return err
-		}
-
-		// Set initial connection state
-		st.ConnectionChanged(b.connectionState)
 	}
 
-	wakuV2Service, err := b.statusNode.WakuV2Service()
+	wakuV2Service := b.statusNode.WakuV2Service()
 
-	switch err {
-	case node.ErrServiceUnknown: // WakuV2 was never registered
-	case nil:
+	if wakuV2Service != nil {
 		if err := wakuV2Service.DeleteKeyPairs(); err != nil { // err is not possible; method return value is incorrect
 			return err
 		}
@@ -1229,15 +1092,7 @@ func (b *GethStatusBackend) injectAccountsIntoServices() error {
 		if err != nil {
 			return ErrWakuIdentityInjectionFailure
 		}
-	default:
-		return err
-	}
-
-	if wakuV2Service != nil {
-		st, err := b.statusNode.WakuV2ExtService()
-		if err != nil {
-			return err
-		}
+		st := b.statusNode.WakuV2ExtService()
 
 		if err := st.InitProtocol(identity, b.appDB, b.multiaccountsDB, acc, logutils.ZapLogger()); err != nil {
 			return err
@@ -1245,13 +1100,6 @@ func (b *GethStatusBackend) injectAccountsIntoServices() error {
 	}
 
 	return nil
-}
-
-func appendIf(condition bool, services []gethnode.ServiceConstructor, service gethnode.ServiceConstructor) []gethnode.ServiceConstructor {
-	if !condition {
-		return services
-	}
-	return append(services, service)
 }
 
 // ExtractGroupMembershipSignatures extract signatures from tuples of content/signature

@@ -38,7 +38,15 @@ checks:
     config:
       threshold: # language-specific defaults. an override will affect all languages.
 exclude_patterns:
-  - vendor/
-  - static/
-  - t/
-  - mailserver/migrations
+  - "vendor/"
+  - "static/"
+  - "t/"
+  - "mailserver/migrations"
+  - "**/*/bindata.go"
+  - "protocol/communities/migrations/migrations.go"
+  - "protocol/encryption/migrations/migrations.go"
+  - "protocol/internal/sqlite/migrations.go"
+  - "protocol/migrations/migrations.go"
+  - "protocol/pushnotificationclient/migrations/migrations.go"
+  - "protocol/pushnotificationserver/migrations/migrations.go"
+  - "protocol/transport/migrations/migrations.go"

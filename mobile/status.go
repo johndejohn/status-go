@@ -175,6 +175,10 @@ func VerifyAccountPassword(keyStoreDir, address, password string) string {
 	return makeJSONResponse(err)
 }
 
+func VerifyDatabasePassword(keyUID, password string) string {
+	return makeJSONResponse(statusBackend.VerifyDatabasePassword(keyUID, password))
+}
+
 // MigrateKeyStoreDir migrates key files to a new directory
 func MigrateKeyStoreDir(accountData, password, oldDir, newDir string) string {
 	var account multiaccounts.Account
@@ -516,27 +520,6 @@ func makeJSONResponse(err error) string {
 	return string(outBytes)
 }
 
-// GetNodesFromContract returns a list of nodes from a given contract
-//export GetNodesFromContract
-func GetNodesFromContract(rpcEndpoint string, contractAddress string) string {
-	nodes, err := statusBackend.GetNodesFromContract(
-		rpcEndpoint,
-		contractAddress,
-	)
-	if err != nil {
-		return makeJSONResponse(err)
-	}
-
-	data, err := json.Marshal(struct {
-		Nodes []string `json:"result"`
-	}{Nodes: nodes})
-	if err != nil {
-		return makeJSONResponse(err)
-	}
-
-	return string(data)
-}
-
 // AddPeer adds an enode as a peer.
 func AddPeer(enode string) string {
 	err := statusBackend.StatusNode().AddPeer(enode)
@@ -597,17 +580,6 @@ func ExportNodeLogs() string {
 		return makeJSONResponse(fmt.Errorf("error marshalling to json: %v", err))
 	}
 	return string(data)
-}
-
-// ChaosModeUpdate sets the Chaos Mode on or off.
-func ChaosModeUpdate(on bool) string {
-	node := statusBackend.StatusNode()
-	if node == nil {
-		return makeJSONResponse(errors.New("node is not running"))
-	}
-
-	err := node.ChaosModeCheckRPCClientsUpstreamURL(on)
-	return makeJSONResponse(err)
 }
 
 // SignHash exposes vanilla ECDSA signing required for Swarm messages
@@ -690,6 +662,25 @@ func ImportUnencryptedDatabase(accountData, password, databasePath string) strin
 
 func ChangeDatabasePassword(keyUID, password, newPassword string) string {
 	err := statusBackend.ChangeDatabasePassword(keyUID, password, newPassword)
+	if err != nil {
+		return makeJSONResponse(err)
+	}
+	return makeJSONResponse(nil)
+}
+
+func ConvertToKeycardAccount(keyStoreDir, accountData, settingsJSON, password, newPassword string) string {
+	var account multiaccounts.Account
+	err := json.Unmarshal([]byte(accountData), &account)
+	if err != nil {
+		return makeJSONResponse(err)
+	}
+	var settings accounts.Settings
+	err = json.Unmarshal([]byte(settingsJSON), &settings)
+	if err != nil {
+		return makeJSONResponse(err)
+	}
+
+	err = statusBackend.ConvertToKeycardAccount(keyStoreDir, account, settings, password, newPassword)
 	if err != nil {
 		return makeJSONResponse(err)
 	}
